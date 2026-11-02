@@ -1,0 +1,35 @@
+# SOLO desarrollo local. En Coolify se despliega el Dockerfile como recurso "Carpetazo Scanner"
+# con su propia base de datos; no uses este archivo contra el VPS de producción.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: vision
+      POSTGRES_USER: vision
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - vision_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vision -d vision"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      VISION_DATABASE_URL: postgresql+psycopg://vision:${POSTGRES_PASSWORD}@db:5432/vision
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8001:8001"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+volumes:
+  vision_pgdata:
