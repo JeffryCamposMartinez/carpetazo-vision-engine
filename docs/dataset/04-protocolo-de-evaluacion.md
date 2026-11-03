@@ -20,7 +20,7 @@
 5. **La verdad de referencia solo es lo verificado por una persona:** cartas `verified`, fotos `verified`, referencias aceptadas a mano. Las asociaciones pendientes de R2 (manifiesto, propuestas)
    **no** son verdad. Las imágenes de R2 que no sean referencias aceptadas solo pueden usarse como **distractores**, y su identidad no se usa.
 6. **Cartas desconocidas, en dos grupos disjuntos:** se simulan retirando de la galería la referencia de algunas cartas verificadas. `--holdout-calibration N` retira cartas que sirven **solo** para calibrar el umbral (se usan sus fotos A) y `--holdout-test M` retira **otras** cartas distintas que sirven **solo** para la prueba (sus fotos B). Ninguna carta se usa en los dos grupos, y las fotos sobrantes de esas cartas se excluyen. Sus fotos deben ser rechazadas. Con 30 cartas, 5 + 5 deja 20 conocidas (ver `06`, punto 6).
-   Solo entran a la galería las cartas con **referencia verificada a mano**; las demás se ignoran.
+   Solo entran a la galería las cartas con **referencia verificada a mano**; las demás se **excluyen por completo** (sus fotos no se usan ni como conocidas ni como desconocidas; el informe cuenta `excluded_photos_without_verified_reference`).
 7. **Sin entrenamiento ni ajuste fino.** Los extractores se usan congelados. Esta etapa solo mide.
 
 ## 4.3 Qué se mide, por separado

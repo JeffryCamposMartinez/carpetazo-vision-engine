@@ -497,3 +497,26 @@ def test_split_by_round_requires_rounds_on_every_used_session_and_both_rounds(co
 def test_session_round_must_be_a_b_or_null():
     assert schema.validate_session({"round": "A"}) == [] and schema.validate_session({"round": None}) == []
     assert schema.validate_session({"round": "calibracion"})
+
+
+# ---- fechas y cartas sin referencia verificada
+@pytest.mark.parametrize("bad", ["", "10-11-2026", "2026/11/10", "2026-13-01", "2026-02-30", "ayer", "2026-1-5"])
+def test_session_dates_must_be_real_yyyy_mm_dd(ds, tmp_path, bad):
+    with pytest.raises(DatasetError, match="AAAA-MM-DD"):
+        ds.add_session("piloto-A-7", bad, None, None, None, None, "A")
+    csv_path = write_csv(tmp_path / "s.csv", [{"session_id": "piloto-A-7", "ronda": "A", "fecha": bad}], SESSION_CSV_COLUMNS)
+    assert len(import_sessions_csv(ds, csv_path, dry_run=True)["errors"]) == 1
+
+
+def test_verified_card_without_verified_reference_is_excluded_from_the_evaluation(ds, tmp_path):
+    from app.dataset_lab.evaluate import run_evaluation
+    from app.dataset_lab.splits import make_split
+    from app.recognition_lab.features import GridExtractor
+    from tests.test_dataset_lab import make_eval_dataset
+
+    refs = make_eval_dataset(ds, tmp_path, cards=3)
+    edit(ds, "cards", refs[0], reference_verified_by=None)
+    make_split(ds, "p", manual={"s-test-a": "calibration", "s-test-b": "test"})
+    d = run_evaluation(ds, "p", {"grid": GridExtractor()}, allow_fictitious=True)["dataset"]
+    assert d["gallery_cards"] == 2 and d["test_photos"] == 4 and d["calibration_photos"] == 4
+    assert d["excluded_photos_without_verified_reference"] == 4  # ni conocida ni desconocida: fuera

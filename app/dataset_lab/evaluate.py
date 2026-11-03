@@ -129,6 +129,12 @@ def run_evaluation(
         and cards[r].get("reference_verified_by")
         and reference_file(ds, r)
     )
+    # una carta verificada SIN referencia verificada no puede ser ni conocida ni desconocida controlada: se excluye por completo
+    no_ref_photos = sum(1 for p in cal + test if p["card_ref"] not in with_ref)
+    cal = [p for p in cal if p["card_ref"] in with_ref]
+    test = [p for p in test if p["card_ref"] in with_ref]
+    if not test:
+        raise DatasetError("No hay fotos de prueba de cartas con referencias verificadas (verifica las referencias y ejecuta references-fetch)")
     ranked = sorted(with_ref, key=lambda r: hashlib.sha256(f"{seed}:{r}".encode()).hexdigest())
     cal_holdout = set(ranked[:holdout_calibration])
     test_holdout = set(ranked[holdout_calibration : holdout_calibration + holdout_test])
@@ -158,7 +164,7 @@ def run_evaluation(
         "dataset": {"manifest_sha256": hashlib.sha256((ds.manifest / "photos.json").read_bytes()).hexdigest(), "split": split_name,
                     "seed": seed, "calibration_photos": len(cal), "test_photos": len(test), "test_cards": len({p["card_ref"] for p in test}),
                     "gallery_cards": len(gallery_cards), "holdout_calibration_cards": sorted(cal_holdout), "holdout_test_cards": sorted(test_holdout), "excluded_photos": len(excluded), "distractors": len(distractors or []),
-                    "photos_without_reference": sum(1 for p in test if p["card_ref"] not in with_ref)},
+                    "excluded_photos_without_verified_reference": no_ref_photos},
         "extractors": {},
     }  # fmt: skip
 

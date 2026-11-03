@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.dataset_lab import schema
 from app.dataset_lab.splits import leak_report
-from app.dataset_lab.store import SESSION_ID, Dataset, DatasetError, atomic_write, now
+from app.dataset_lab.store import SESSION_ID, Dataset, DatasetError, atomic_write, now, valid_date
 from app.dataset_lab.validator import validate
 
 DEFAULT_PLAN = {
@@ -168,8 +168,8 @@ def import_sessions_csv(ds: Dataset, path: Path, dry_run: bool = False) -> dict:
                     raise DatasetError("session_id: 3–41 caracteres (letras, números, _ . -)")
                 if g("ronda") not in schema.ROUNDS:
                     raise DatasetError("ronda debe ser A o B")
-                if not g("fecha"):
-                    raise DatasetError("fecha es obligatoria")
+                if not valid_date(g("fecha")):
+                    raise DatasetError("fecha obligatoria en formato AAAA-MM-DD (p. ej. 2026-11-05)")
                 if not dry_run:
                     ds.add_session(sid, g("fecha"), g("telefono") or None, g("lugar") or None, g("operador") or None, g("notas") or None, g("ronda"))
                 known.add(sid)

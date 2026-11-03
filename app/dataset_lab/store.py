@@ -19,6 +19,15 @@ class DatasetError(Exception):
     pass
 
 
+def valid_date(value: str) -> bool:
+    """Fecha de captura AAAA-MM-DD real (p. ej. 2026-11-05)."""
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return False
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value))
+
+
 def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -93,6 +102,8 @@ class Dataset:
     ) -> dict:
         if not SESSION_ID.match(session_id):
             raise DatasetError("session_id: 3–41 caracteres (letras, números, _ . -), p. ej. s-2026-11-05-a")
+        if not valid_date(date):
+            raise DatasetError(f"fecha {date!r} inválida: use AAAA-MM-DD (p. ej. 2026-11-05)")
         sessions = self.sessions
         if session_id in sessions:
             raise DatasetError(f"La sesión {session_id} ya existe")
