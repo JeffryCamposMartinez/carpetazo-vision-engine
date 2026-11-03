@@ -49,15 +49,15 @@ def query_once(scene, ext: Extractor, index: RefIndex, timings: dict) -> dict:
     if quad is None:
         return {"detected": False}
     card = warp_card(scene, quad)
-    best = None
+    best, best_vec = None, None
     for rotated in (card, cv2.rotate(card, cv2.ROTATE_180)):  # la orientación de 180° no se conoce de antemano
         vec = ext.embed(rotated)
         res = index.search(vec, max(KS))
         if best is None or res[0][1] > best[0][1]:
-            best = res
+            best, best_vec = res, vec
     t2 = time.perf_counter()
     timings["rectify_embed_search"].append((t2 - t1) * 1000)
-    return {"detected": True, "quad": quad, "quad_score": score, "results": best}
+    return {"detected": True, "quad": quad, "quad_score": score, "results": best, "vec": best_vec}
 
 
 def evaluate(queries: list[dict], index: RefIndex, items_by_id: dict, group_size: dict) -> dict:
@@ -102,6 +102,7 @@ def run_benchmark(
     seed: int = 11,
     max_queries: int = 240,
     unknown_fraction: float = 0.2,
+    keep: bool = False,
 ) -> dict:
     rng = random.Random(seed)
     cards = sorted({i["card_key"] for i in items})
@@ -233,6 +234,18 @@ def run_benchmark(
         "latency_ms": {k: {"p50": pctl(v, 50), "p95": pctl(v, 95)} for k, v in timings.items()},
         "extrapolated_matrix_mb_for_28k_images": round(index.memory_bytes / max(1, len(index)) * 28000 / 1_048_576, 1),
     }
+    # Detalle por consulta (para subconjuntos, p. ej. el verificado); sin vectores
+    results["per_query"] = [
+        {"level": lname, "known": truth, "stratum": q["stratum"], "truth_id": q["truth_id"], "detected": q["detected"],
+         "top1_id": q["results"][0][0] if q["detected"] else None,
+         "card_ok": bool(q["detected"] and truth and index.card_of[q["results"][0][0]] == index.card_of[q["truth_id"]]),
+         "exact_ok": bool(q["detected"] and truth and q["results"][0][0] == q["truth_id"]),
+         "accepted": bool(q["detected"] and index.decide(q["results"], t_score, t_margin).status == "known")}
+        for lname, parts in scored.items() for truth, bucket in ((True, parts["known"]), (False, parts["unknown"])) for q in bucket
+    ]  # fmt: skip
+    if keep:
+        results["_index"] = index
+        results["_scored"] = scored
     results["warning"] = (
         "SINTÉTICO: escenas simuladas desde las mismas imágenes de referencia; no es precisión con fotos reales."
     )

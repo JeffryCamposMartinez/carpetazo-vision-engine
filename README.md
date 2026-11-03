@@ -88,7 +88,7 @@ Ver `.env.example` (con comentarios). Las obligatorias: `VISION_SECRET_KEY`, `VI
 | `docs/hostinger-integration.md` | Guía (aún no ejecutada) para probar con pgvector real en el VPS sin tocar producción |
 | `docs/catalog-model.md` | Modelo del catálogo, variantes, idiomas, identidad de cartas, decisiones pendientes |
 | `docs/catalog-import-runbook.md` | Importador TCGdex: comandos, garantías y recuperación |
-| `docs/recognition/` | Investigación de reconocimiento visual: comparativa de repositorios y licencias, auditoría de R2, arquitectura, diseño de dataset y benchmark sintético |
+| `docs/recognition/` | Investigación de reconocimiento visual: comparativa de repositorios y licencias, auditoría de R2, arquitectura, diseño de dataset, benchmark sintético y experimento con DINOv2-small (`06-…`; entorno ML aparte: `scripts\ml\setup-ml-env.ps1`) |
 | `evaluation/set_aliases.schema.json` | Esquema de alias de sets y de asociaciones por objeto |
 
 ## Docker (opcional)

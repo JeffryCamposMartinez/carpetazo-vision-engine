@@ -67,32 +67,39 @@ class GridExtractor:
         return _unit(np.concatenate([_unit(color), _unit(hist)]))
 
 
-class HuggingFaceExtractor:  # pragma: no cover - requiere torch/transformers y pesos descargados
-    """DINOv2 (CLS + media de parches) o SigLIP (get_image_features). NO ejecutado en este entorno."""
+class Dinov2Extractor:  # pragma: no cover - requiere torch/transformers y pesos descargados (entorno ML aparte)
+    """DINOv2 congelado. Embedding = CLS + media de parches (2 x hidden) o solo CLS.
 
-    def __init__(self, model_id: str, device: str = "cpu"):
+    Preprocesado propio (sin AutoImageProcessor): redimensiona a (ancho, alto) conservando la proporción de carta
+    (por defecto 224x308, múltiplos de 14) SIN recorte central, normaliza con media/desviación de ImageNet.
+    """
+
+    def __init__(self, model_id: str = "facebook/dinov2-small", device: str | None = None, pooling: str = "cls_mean",
+                 size: tuple[int, int] = (224, 308), cache_dir: str | None = None, local_only: bool = False):  # fmt: skip
         import torch
-        from transformers import AutoImageProcessor, AutoModel
+        from transformers import Dinov2Model
 
         self._torch = torch
-        self.model_id, self.name = model_id, model_id.split("/")[-1]
-        self.processor = AutoImageProcessor.from_pretrained(model_id)
-        self.model = AutoModel.from_pretrained(model_id).eval().to(device)
-        self.device = device
-        self.is_siglip = "siglip" in model_id.lower()
-        self.dim = self.embed(np.zeros((CANON_H, CANON_W, 3), np.uint8)).shape[0]
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = (
+            Dinov2Model.from_pretrained(model_id, cache_dir=cache_dir, local_files_only=local_only)
+            .eval()
+            .to(self.device)
+        )
+        self.pooling, self.size = pooling, size
+        self.name = f"{model_id.split('/')[-1]}-{pooling}-{size[0]}x{size[1]}-{self.device}"
+        self._mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
+        self._std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
+        self.dim = self.model.config.hidden_size * (2 if pooling == "cls_mean" else 1)
 
     def embed(self, bgr: np.ndarray) -> np.ndarray:
         torch = self._torch
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        inputs = self.processor(images=rgb, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            if self.is_siglip:
-                vec = self.model.get_image_features(**inputs)[0]
-            else:
-                h = self.model(**inputs).last_hidden_state[0]
-                vec = torch.cat([h[0], h[1:].mean(0)])
-        return _unit(vec.cpu().numpy())
+        rgb = cv2.cvtColor(cv2.resize(bgr, self.size, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+        x = torch.from_numpy(rgb).to(self.device).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+        with torch.inference_mode():
+            h = self.model(pixel_values=(x - self._mean) / self._std).last_hidden_state[0]
+            vec = torch.cat([h[0], h[1:].mean(0)]) if self.pooling == "cls_mean" else h[0]
+        return _unit(vec.float().cpu().numpy())
 
 
 REGISTRY = {"phash": PHashExtractor, "grid": GridExtractor}
