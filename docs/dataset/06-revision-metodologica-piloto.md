@@ -32,3 +32,10 @@ DINOv2-small congelado; referencia digital verificada a mano; carencias registra
 Ya se cubre con tres controles que se mantienen: (1) SHA-256 único en todo el dataset (el mismo archivo no se puede importar dos veces), (2) cuasi-duplicados por hash perceptual
 de la misma carta entre sesiones distintas → `needs_review` y bloqueo de la partición/exportación, (3) la evaluación verifica que ninguna sesión esté en los dos conjuntos.
 Lo nuevo: la partición **por ronda** y la exigencia de que ninguna sesión mezcle rondas.
+
+## 6.4 Endurecimiento posterior (revisión de pruebas)
+Al escribir las pruebas del piloto se corrigieron huecos que contradecían este documento:
+- `review` ahora **se niega a verificar más de 5 fotos por carta y ronda** (antes solo lo detectaba `pilot-status`).
+- No se pueden registrar **dos cartas iguales** (mismo nombre, set, número, idioma, acabado y patrón), ni repetir un `slot` o un `session_id` dentro de un CSV.
+- `pilot-import-cards` rechaza filas «EJEMPLO», slots fuera de 1–30 y ids no UUID, y su `--dry-run` aplica las **mismas validaciones** que la importación real (antes una fila con referencia sin verificar podía dejar una carta a medias).
+- Una **carencia no reduce el requisito de 30 cartas verificadas**: sin ellas el veredicto sigue siendo «PILOTO INCOMPLETO».

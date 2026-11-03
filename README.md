@@ -49,7 +49,7 @@ Si PowerShell bloquea los scripts: `Set-ExecutionPolicy -Scope CurrentUser Remot
 | `migrate.ps1 [-Action up\|down\|current\|history] [-Revision]` | Alembic; muestra el destino, confirma los `down` y rechaza servidores no locales sin `-AllowRemote` |
 | `verify-postgres.ps1 [-ExpectMigrated]` | Diagnóstico de PostgreSQL, pgvector, migraciones, tablas e índices (solo lectura) |
 | `create-dev-db.ps1` | Crea usuario y bases exclusivas de desarrollo/pruebas |
-| `dataset.ps1 <comando>` | Herramienta local del dataset de fotos reales (import, review, validate, split, export, backup, evaluate) |
+| `dataset.ps1 <comando>` | Herramienta local del dataset de fotos reales (import, review, validate, split, export, backup, evaluate; piloto de 30 cartas: pilot-import-cards, pilot-import-sessions, pilot-gap, pilot-status) |
 
 ## Pruebas
 

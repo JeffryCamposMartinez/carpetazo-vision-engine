@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.dataset_lab import schema
 from app.dataset_lab.splits import leak_report
-from app.dataset_lab.store import Dataset, DatasetError, atomic_write, now
+from app.dataset_lab.store import SESSION_ID, Dataset, DatasetError, atomic_write, now
 from app.dataset_lab.validator import validate
 
 DEFAULT_PLAN = {
@@ -67,10 +67,39 @@ def _split_list(value: str) -> list[str]:
     return [x.strip() for x in value.replace(",", ";").split(";") if x.strip()]
 
 
+def _check_row(g, slot: int | None, target: int) -> None:
+    """Validaciones de una fila con carta o carencia; son las mismas en dry-run y en la importación real."""
+    texts = (g("nombre"), g("sin_carta_motivo"), g("nota_verificacion"), g("nota_referencia"), g("carta_verificada_por"))
+    if any(t.upper().startswith("EJEMPLO") for t in texts):
+        raise DatasetError("La fila es de EJEMPLO (dato ficticio): no se importa al dataset real")
+    if slot is None or not 1 <= slot <= target:
+        raise DatasetError(f"slot debe ser un número entre 1 y {target}")
+    if g("nombre") and g("sin_carta_motivo"):
+        raise DatasetError("Una fila lleva nombre (carta) o sin_carta_motivo (carencia), no ambos")
+    if not g("nombre"):
+        return
+    if g("clave_referencia_r2") and not (g("referencia_verificada_por") and g("nota_referencia")):
+        raise DatasetError("clave_referencia_r2 exige referencia_verificada_por y nota_referencia (verificación manual)")
+    if (g("referencia_verificada_por") or g("nota_referencia")) and not g("clave_referencia_r2"):
+        raise DatasetError("referencia_verificada_por/nota_referencia sin clave_referencia_r2")
+    if g("carta_verificada_por") and not g("nota_verificacion"):
+        raise DatasetError("carta_verificada_por exige nota_verificacion")
+    if g("nota_verificacion") and not g("carta_verificada_por"):
+        raise DatasetError("nota_verificacion sin carta_verificada_por")
+    if g("clave_referencia_r2") and not g("carta_verificada_por"):
+        raise DatasetError("La referencia solo se verifica en cartas ya verificadas (rellena carta_verificada_por)")
+
+
 def import_cards_csv(ds: Dataset, path: Path, by: str, dry_run: bool = False) -> dict:
-    """Importa la plantilla de 30 cartas. Idempotente por `slot`. Las filas vacías se ignoran; las filas con `sin_carta_motivo` declaran carencia."""
+    """Importa la plantilla de 30 cartas. Idempotente por `slot`. Filas vacías se ignoran; `sin_carta_motivo` declara carencia.
+
+    Una fila inválida se informa y se omite sin escribir nada de ella (también en dry-run: mismas validaciones).
+    """
     out = {"created": [], "skipped_existing": [], "gaps": [], "ignored_empty": 0, "errors": []}
+    target = load_plan(ds)["cards_target"]
     existing_slots = {c.get("pilot_slot") for c in ds.cards.values()}
+    seen_slots: set[int] = set()
+    seen_keys: set[tuple] = {Dataset.identity_key(c) for c in ds.cards.values()}
     with Path(path).open(newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     for row in rows:
@@ -79,19 +108,22 @@ def import_cards_csv(ds: Dataset, path: Path, by: str, dry_run: bool = False) ->
         if not g("nombre") and not g("sin_carta_motivo"):
             out["ignored_empty"] += 1
             continue
-        if slot in existing_slots and g("nombre"):
-            out["skipped_existing"].append(slot)
-            continue
-        if not g("nombre"):
-            cats = _split_list(g("categorias")) or ([SUGGESTED[slot]] if slot in SUGGESTED else [])
-            for cat in cats:
-                if cat in GAP_CATEGORIES:
-                    if not dry_run:
-                        out["gaps"].append(declare_gap(ds, cat, g("sin_carta_motivo"), by, slot))
-                    else:
-                        out["gaps"].append({"category": cat, "slot": slot})
-            continue
         try:
+            _check_row(g, slot, target)
+            if slot in seen_slots:
+                raise DatasetError(f"slot {slot} repetido en el CSV")
+            seen_slots.add(slot)
+            if not g("nombre"):
+                cats = _split_list(g("categorias")) or ([SUGGESTED[slot]] if slot in SUGGESTED else [])
+                bad = [c for c in cats if c not in GAP_CATEGORIES]
+                if bad or not cats:
+                    raise DatasetError(f"Carencia sin categoría válida (categorias={bad or cats}; use {GAP_CATEGORIES})")
+                for cat in cats:
+                    out["gaps"].append({"category": cat, "slot": slot} if dry_run else declare_gap(ds, cat, g("sin_carta_motivo"), by, slot))
+                continue
+            if slot in existing_slots:
+                out["skipped_existing"].append(slot)
+                continue
             fields = dict(
                 pilot_slot=slot, name=g("nombre"), set_name=g("set"), collector_number=g("numero"), language=g("idioma") or "unknown",
                 finish=g("acabado") or "desconocido", categories=_split_list(g("categorias")) or None, pattern=g("patron") or None,
@@ -99,13 +131,11 @@ def import_cards_csv(ds: Dataset, path: Path, by: str, dry_run: bool = False) ->
                 condition_notes=g("notas_estado") or None, tcgdex_card_id=g("id_tcgdex") or None, card_id=g("card_id") or None,
                 printing_id=g("printing_id") or None, variant_id=g("variant_id") or None, reference_object_key=g("clave_referencia_r2") or None,
             )  # fmt: skip
-            if g("clave_referencia_r2") and not (g("referencia_verificada_por") and g("nota_referencia")):
-                raise DatasetError(
-                    "clave_referencia_r2 exige referencia_verificada_por y nota_referencia (verificación manual)"
-                )
-            if g("carta_verificada_por") and not g("nota_verificacion"):
-                raise DatasetError("carta_verificada_por exige nota_verificacion")
+            key = Dataset.identity_key({**fields, "set_name": fields["set_name"], "pattern": fields["pattern"] or "desconocido"})
+            if key in seen_keys:
+                raise DatasetError("Carta duplicada: otra fila o carta ya registrada tiene el mismo nombre, set, número, idioma, acabado y patrón")
             card = ds.add_card(persist=not dry_run, **fields)
+            seen_keys.add(key)
             if dry_run:
                 out["created"].append(slot)
                 continue
@@ -113,10 +143,6 @@ def import_cards_csv(ds: Dataset, path: Path, by: str, dry_run: bool = False) ->
                 ds.verify_card(card["card_ref"], g("carta_verificada_por"), g("nota_verificacion"))
                 if g("clave_referencia_r2"):
                     ds.verify_reference(card["card_ref"], g("referencia_verificada_por"), g("nota_referencia"))
-            elif g("clave_referencia_r2"):
-                raise DatasetError(
-                    "La referencia solo se verifica en cartas ya verificadas (rellena carta_verificada_por)"
-                )
             out["created"].append(card["card_ref"])
         except DatasetError as exc:
             out["errors"].append({"slot": slot, "nombre": g("nombre"), "error": str(exc)})
@@ -125,34 +151,31 @@ def import_cards_csv(ds: Dataset, path: Path, by: str, dry_run: bool = False) ->
 
 def import_sessions_csv(ds: Dataset, path: Path, dry_run: bool = False) -> dict:
     out = {"created": [], "skipped_existing": [], "errors": []}
-    sessions = ds.sessions
+    known = set(ds.sessions)
     with Path(path).open(newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             g = lambda k, row=row: (row.get(k) or "").strip()  # noqa: E731
-            if not g("session_id"):
-                continue
-            if g("session_id") in sessions:
-                out["skipped_existing"].append(g("session_id"))
+            sid = g("session_id")
+            if not sid:
                 continue
             try:
-                if dry_run:
-                    if g("ronda") not in schema.ROUNDS or not g("fecha"):
-                        raise DatasetError("ronda debe ser A o B y fecha es obligatoria")
-                else:
-                    if not g("fecha"):
-                        raise DatasetError("fecha es obligatoria")
-                    ds.add_session(
-                        g("session_id"),
-                        g("fecha"),
-                        g("telefono") or None,
-                        g("lugar") or None,
-                        g("operador") or None,
-                        g("notas") or None,
-                        g("ronda") or None,
-                    )
-                out["created"].append(g("session_id"))
+                if sid in known:
+                    if sid in out["created"]:
+                        raise DatasetError(f"session_id {sid} repetido en el CSV")
+                    out["skipped_existing"].append(sid)
+                    continue
+                if not SESSION_ID.match(sid):
+                    raise DatasetError("session_id: 3–41 caracteres (letras, números, _ . -)")
+                if g("ronda") not in schema.ROUNDS:
+                    raise DatasetError("ronda debe ser A o B")
+                if not g("fecha"):
+                    raise DatasetError("fecha es obligatoria")
+                if not dry_run:
+                    ds.add_session(sid, g("fecha"), g("telefono") or None, g("lugar") or None, g("operador") or None, g("notas") or None, g("ronda"))
+                known.add(sid)
+                out["created"].append(sid)
             except DatasetError as exc:
-                out["errors"].append({"session_id": g("session_id"), "error": str(exc)})
+                out["errors"].append({"session_id": sid, "error": str(exc)})
     return out
 
 

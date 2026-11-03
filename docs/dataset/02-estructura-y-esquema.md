@@ -6,14 +6,15 @@ Todo vive en `datasets/real-photos/` (carpeta **ignorada por Git**; nunca se sub
 ```
 datasets/real-photos/
 ├── dataset.json              # versión del esquema y fecha de creación
+├── pilot.json                # (opcional) plan del piloto y carencias declaradas (pilot-gap)
 ├── inbox/                    # tú copias aquí las fotos nuevas (el importador NO las mueve ni las modifica)
 ├── originals/                # copias de solo lectura, una por foto: originals/<sesión>/<image_id>.jpg
 ├── manifest/
 │   ├── cards.json            # registro de cartas físicas (pc-001, pc-002...)
-│   ├── sessions.json         # sesiones de captura
+│   ├── sessions.json         # sesiones de captura (cada una con su ronda A/B)
 │   └── photos.json           # una entrada por foto
 ├── references/               # imágenes digitales de referencia verificadas (pc-001.webp...) descargadas con references-fetch
-├── splits/                   # particiones calibración/prueba por sesión (<nombre>.json)
+├── splits/                   # particiones calibración/prueba por sesión; en el piloto, por ronda (<nombre>.json)
 └── exports/                  # exportaciones (copias) para análisis
 ```
 Los **originales** se copian una vez, se marcan de solo lectura y se verifican con SHA-256. Ninguna herramienta los mueve, edita ni borra.
@@ -25,12 +26,22 @@ Los **originales** se copian una vez, se marcan de solo lectura y se verifican c
 | `name`, `set_name`, `collector_number` | texto | Obligatorios: lo que se lee en la carta física |
 | `language` | `unknown` o código (`en`, `es`, `fr`...) | |
 | `finish` | `normal` · `holo` · `reverse_holo` · `full_art` · `promo` · `otro` · `desconocido` | |
-| `category` | `comun` · `full_art` · `holo` · `reverse_holo` · `promo` · `antigua` · `variante_patron` · `arte_similar` · `otra` | Para estratificar |
+| `pilot_slot` | 1–30 o `null` | Posición en la plantilla (idempotencia de la importación) |
+| `categories` | lista de `comun` · `holo` · `reverse_holo` · `full_art` · `promo` · `similar_dificil` · `antigua` · `variante_patron` · `otra` | **Solapables**: una carta puede estar en varias. `otra` = sin asignar (el estado del piloto lo marca como pendiente) |
+| `pattern` | `ninguno` · `pokeball` · `masterball` · `desconocido` | Obligatorio declararlo (`desconocido` bloquea el piloto) |
+| `variant_group` | texto o `null` | Agrupa la carta base y sus patrones del mismo número |
+| `similar_to`, `difficulty_note` | texto o `null` | Para `similar_dificil`: con qué se confunde y por qué (la nota es obligatoria) |
 | `tcgdex_card_id` | texto o `null` | Id de TCGdex si una persona lo confirmó |
 | **`card_id`, `printing_id`, `variant_id`** | **UUID del catálogo o `null`** | **Desconocido = `null`. Nunca se rellenan por suposición** |
 | `reference_object_key` | texto o `null` | Objeto de R2 que una persona comparó con la carta física y aceptó como referencia |
+| `reference_verified_by`, `reference_verified_at`, `reference_verification_note` | texto o `null` | **Verificación manual de la referencia digital** (quién, cuándo y qué se comparó). Sin ella la carta no entra en la galería de evaluación |
 | `reference_sha256` | texto o `null` | Se completa con `references-fetch` |
-| `verification_status` | `unverified` · `verified` | `verified` exige `verified_by`, `verified_at` y `verification_note` |
+| `verification_status` | `unverified` · `verified` | `verified` exige `verified_by`, `verified_at` y `verification_note` (verificación **manual de la carta física**) |
+
+No se admiten dos cartas con el mismo nombre, set, número, idioma, acabado y patrón (la misma carta física no se registra dos veces). Los tres ids del catálogo son `null` o un UUID válido; una cadena vacía o inventada se rechaza.
+
+### Sesiones (`sessions.json`)
+`capture_session_id` (único), `date`, `device_model`, `place`, `operator`, `notes` y **`round`**: `A` (calibración), `B` (evaluación final) o `null`. Una sesión pertenece a una sola ronda; las fotos verificadas del piloto exigen una sesión con ronda.
 
 ## 2.3 Registro de fotos (`photos.json`)
 Campos solicitados (todos presentes en cada foto):
@@ -57,7 +68,7 @@ Campos adicionales: `card_ref` (clave local de la carta), `glare` (`ninguno`/`le
 ### Estados de verificación de una foto
 `pending` (recién importada, sin revisar) → `verified` (una persona comprobó que la foto es de esa carta, nítida y sin duplicado) ·
 `needs_review` (la herramienta detectó resolución baja, desenfoque, poca/mucha luz o un posible duplicado entre sesiones) · `rejected`.
-Una foto solo puede ser `verified` si **su carta está `verified`**, tiene `verified_by` y no tiene banderas bloqueantes (salvo `--accept-quality`/`--accept-duplicates`, que quedan en el historial de comandos).
+Una foto solo puede ser `verified` si **su carta está `verified`**, tiene `verified_by`, no tiene banderas bloqueantes (salvo `--accept-quality`/`--accept-duplicates`, que quedan en el historial de comandos) y **no supera 5 fotos verificadas por carta y ronda** (la herramienta se niega a verificar una sexta).
 
 ### Banderas de calidad (`quality.flags`)
 `resolucion_baja` (< 720 px de lado corto, bloquea) · `resolucion_justa` (< 1080 px) · `borrosa` · `muy_oscura` · `sobreexpuesta` · `posible_reflejo` (informativa) ·

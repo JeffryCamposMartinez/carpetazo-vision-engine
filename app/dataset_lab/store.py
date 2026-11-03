@@ -12,7 +12,7 @@ from pathlib import Path
 from app.dataset_lab import schema
 
 DEFAULT_ROOT = Path("datasets/real-photos")
-_SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,40}$")
+SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,40}$")
 
 
 class DatasetError(Exception):
@@ -91,7 +91,7 @@ class Dataset:
         notes: str | None,
         round_label: str | None = None,
     ) -> dict:
-        if not _SESSION.match(session_id):
+        if not SESSION_ID.match(session_id):
             raise DatasetError("session_id: 3–41 caracteres (letras, números, _ . -), p. ej. s-2026-11-05-a")
         sessions = self.sessions
         if session_id in sessions:
@@ -128,10 +128,20 @@ class Dataset:
         errors = schema.validate_card(record)
         if errors:
             raise DatasetError("; ".join(errors))
+        key = self.identity_key(record)
+        twin = next((r for r, c in cards.items() if self.identity_key(c) == key), None)
+        if twin:
+            raise DatasetError(f"Carta duplicada: ya existe {twin} con el mismo nombre, set, número, idioma, acabado y patrón")
         if persist:
             cards[ref] = record
             self.save_cards(cards)
         return record
+
+    @staticmethod
+    def identity_key(card: dict) -> tuple:
+        """Clave para detectar la misma carta física registrada dos veces (sin distinguir mayúsculas)."""
+        fields = ("name", "set_name", "collector_number", "language", "finish", "pattern")
+        return tuple(str(card.get(f) or "").strip().casefold() for f in fields)
 
     def verify_reference(self, card_ref: str, by: str, note: str) -> dict:
         cards = self.cards

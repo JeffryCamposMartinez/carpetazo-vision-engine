@@ -138,6 +138,22 @@ def cmd_review(ds: Dataset, a) -> int:
                 raise DatasetError(
                     f"{i}: posible duplicado entre sesiones {p['possible_duplicates']}; revisa o usa --accept-duplicates"
                 )
+            rnd = ds.sessions.get(p["capture_session_id"], {}).get("round")
+            from app.dataset_lab.pilot import load_plan
+
+            limit = load_plan(ds)["photos_per_round"]
+            if rnd and p["verification_status"] != "verified":
+                same_round = sum(
+                    1
+                    for q in photos.values()
+                    if q.get("card_ref") == p.get("card_ref")
+                    and q["verification_status"] == "verified"
+                    and ds.sessions.get(q["capture_session_id"], {}).get("round") == rnd
+                )
+                if same_round >= limit:
+                    raise DatasetError(
+                        f"{i}: la carta {p.get('card_ref')} ya tiene {same_round} fotos verificadas en la ronda {rnd} (máximo {limit}); no se verifica otra"
+                    )
         p["verification_status"] = a.status
         if a.status == "verified":
             p["verified_by"] = a.by
