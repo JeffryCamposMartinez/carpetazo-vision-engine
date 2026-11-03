@@ -88,7 +88,7 @@ def test_retirement_is_a_flag_and_changes_are_logged_with_before_and_after(sessi
     c.retired_at = c.last_seen_at
     session.commit()
     assert session.get(MirrorCard, (3, 1)).retired_at is not None and session.scalars(select(MirrorChange)).one().kind == "retired"
-    assert {col.name for col in MirrorCard.__table__.columns} >= {"digest", "first_seen_at", "last_seen_at", "last_changed_at", "retired_at", "last_run_id", "image_url", "image_origin", "tcgplayer_product_id", "relation", "extended_data"}
+    assert {col.name for col in MirrorCard.__table__.columns} >= {"digest", "first_seen_at", "last_seen_at", "last_changed_at", "retired_at", "last_run_id", "image_url", "image_origin", "tcgplayer_product_id", "source_category_id", "relation", "extended_data"}
 
 
 def test_no_image_bytes_are_stored_only_traceability_fields():

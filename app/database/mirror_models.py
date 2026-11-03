@@ -83,6 +83,7 @@ class MirrorCard(Base):
     name: Mapped[str] = mapped_column(Text)
     number: Mapped[str | None] = mapped_column(String(40))
     rarity: Mapped[str | None] = mapped_column(String(80))
+    source_category_id: Mapped[int | None] = mapped_column(Integer)  # categoryId de la fila tal como lo entrega la API (en la categoría 100: 3 = producto inglés visto en español, 100 = solo español)
     language: Mapped[str | None] = mapped_column(String(10))  # «Language» de extendedData si viene; si no, null (no se adivina)
     game_name: Mapped[str | None] = mapped_column(Text)
     extended_data: Mapped[list] = mapped_column(Json, default=list)  # tal como lo entrega la API (incluye TcgplayerProductId si algún día se expone)
@@ -91,7 +92,7 @@ class MirrorCard(Base):
     image_origin: Mapped[str] = mapped_column(String(20), default="none")  # carpetazo_r2 | tcgplayer_cdn | tcgdex | placeholder | none
     image_key: Mapped[str | None] = mapped_column(Text)  # ruta de la imagen cuando el origen es R2 de Carpetazo
     has_image: Mapped[bool] = mapped_column(Boolean, default=False)
-    relation: Mapped[str | None] = mapped_column(String(40))  # DERIVADO localmente (no lo entrega la API): catalog_product | spanish_view_of_english_product | spanish_only
+    relation: Mapped[str | None] = mapped_column(String(40))  # DERIVADO de source_category_id (no lo entrega la API como tal): catalog_product | spanish_view_of_english_product | spanish_only
     digest: Mapped[str] = mapped_column(String(64))
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

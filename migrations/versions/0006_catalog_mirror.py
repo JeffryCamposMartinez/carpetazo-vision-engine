@@ -70,6 +70,7 @@ def upgrade() -> None:
         sa.Column("name", sa.Text, nullable=False),
         sa.Column("number", sa.String(40)),
         sa.Column("rarity", sa.String(80)),
+        sa.Column("source_category_id", sa.Integer),
         sa.Column("language", sa.String(10)),
         sa.Column("game_name", sa.Text),
         sa.Column("extended_data", JSON),
@@ -86,7 +87,7 @@ def upgrade() -> None:
         sa.Column("retired_at", TS),
         sa.Column("last_run_id", sa.Uuid, sa.ForeignKey("mirror_sync_runs.id")),
         sa.ForeignKeyConstraint(["category_id"], ["mirror_games.category_id"], ondelete="RESTRICT"),
-        sa.ForeignKeyConstraint(["category_id", "group_id"], ["mirror_sets.category_id", "mirror_sets.group_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(["category_id", "group_id"], ["mirror_sets.category_id", "mirror_sets.group_id"], ondelete="RESTRICT"),  # noqa: E501
     )
     op.create_index("ix_mirror_cards_group", "mirror_cards", ["category_id", "group_id"])
     op.create_index("ix_mirror_cards_product", "mirror_cards", ["product_id"])
