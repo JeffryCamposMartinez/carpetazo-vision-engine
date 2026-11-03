@@ -13,14 +13,15 @@ WSL2 ni virtualización.
 | Importador TCGdex (idempotente, reanudable, sin imágenes) | Implementado; probado con TCGdex real en 2 sets |
 | Inventario/matching/auditoría de imágenes de R2 (solo lectura) | Implementado |
 | Propuestas de asociación R2 → carta (separadas de las aprobadas) | Implementado |
-| Detección, embeddings, OCR, validación, cámara continua | **Pendiente** |
+| Laboratorio de reconocimiento (`app/recognition_lab`): detección clásica, líneas base, índice, benchmark **sintético** | Experimental, aislado de la API |
+| Detección aprendida, embeddings profundos (DINOv2/SigLIP), OCR, cámara continua | **Pendiente** |
 
 Mientras no exista reconocimiento, `/v1/scan` devuelve `unknown` o `poor_quality` con `recognition_available: false`.
 
 ## Requisitos
 
 - Windows con **Python 3.12+** (python.org).
-- **PostgreSQL nativo** con la extensión **pgvector** para migraciones e integración: `docs/postgres-windows.md`.
+- **PostgreSQL nativo** con la extensión **pgvector** para migraciones e integración: `docs/postgres-windows.md` (§3.2: copia privada con pgvector 0.8.7, validada, `scripts\dev\pg-lab.ps1`).
   Sin PostgreSQL puedes desarrollar y ejecutar las pruebas unitarias (SQLite).
 
 ## Inicio rápido (PowerShell, desde la raíz del proyecto)
@@ -87,6 +88,7 @@ Ver `.env.example` (con comentarios). Las obligatorias: `VISION_SECRET_KEY`, `VI
 | `docs/hostinger-integration.md` | Guía (aún no ejecutada) para probar con pgvector real en el VPS sin tocar producción |
 | `docs/catalog-model.md` | Modelo del catálogo, variantes, idiomas, identidad de cartas, decisiones pendientes |
 | `docs/catalog-import-runbook.md` | Importador TCGdex: comandos, garantías y recuperación |
+| `docs/recognition/` | Investigación de reconocimiento visual: comparativa de repositorios y licencias, auditoría de R2, arquitectura, diseño de dataset y benchmark sintético |
 | `evaluation/set_aliases.schema.json` | Esquema de alias de sets y de asociaciones por objeto |
 
 ## Docker (opcional)
