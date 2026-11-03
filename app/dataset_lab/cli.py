@@ -242,6 +242,29 @@ def cmd_pilot_templates(ds: Dataset, a) -> int:
     return 0
 
 
+def cmd_compare_normalization(ds: Dataset, a) -> int:
+    from app.dataset_lab.normalization_eval import run_normalization_comparison
+    from app.recognition.embedding import EmbeddingService
+    from app.recognition.embedding.grid import GridExtractor
+
+    if a.extractor == "grid":
+        service = EmbeddingService(None, GridExtractor())
+    else:
+        from app.core.config import get_settings
+
+        service = EmbeddingService.from_settings(get_settings().model_copy(update={"embedding_primary": "dinov2-small"}))
+    try:
+        result = run_normalization_comparison(ds, a.split, lambda img: service.embed(img).vector, a.on, confirm_test=a.confirm_test, allow_fictitious=a.allow_fictitious, extractor_label=a.extractor)
+    finally:
+        service.close()
+    out = REPORTS / f"normalization-compare-{a.split}-{a.on}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    jprint(result)
+    print("Informe:", out)
+    return 0
+
+
 def cmd_split(ds: Dataset, a) -> int:
     if a.by_round:
         from app.dataset_lab.splits import make_split_by_round
@@ -433,6 +456,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = add("pilot-import-sessions", cmd_pilot_import_sessions)
     s.add_argument("--csv", required=True)
     s.add_argument("--dry-run", action="store_true")
+    s = add("compare-normalization", cmd_compare_normalization)
+    s.add_argument("--split", required=True)
+    s.add_argument("--on", default="calibration", choices=["calibration", "test"], help="decide con calibration; test solo una vez")
+    s.add_argument("--extractor", default="grid", choices=["grid", "dinov2"])
+    s.add_argument("--confirm-test", action="store_true")
+    s.add_argument("--allow-fictitious", action="store_true")
     s = add("export", cmd_export)
     s.add_argument("--out", required=True)
     s.add_argument("--split")
