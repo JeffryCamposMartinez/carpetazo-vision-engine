@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Resumen legible del manifiesto: python -m scripts.summarize_manifest"""
 
 import json
