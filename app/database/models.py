@@ -339,3 +339,6 @@ class ImageMappingProposal(Base):
     evidence: Mapped[dict] = mapped_column(Json, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="proposed")  # proposed | rejected | superseded
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+from app.database import reference_models  # noqa: E402,F401  (registra las tablas del índice de referencias en Base.metadata)

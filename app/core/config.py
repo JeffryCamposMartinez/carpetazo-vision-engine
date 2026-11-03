@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     embedding_worker_idle_seconds: float = 120.0  # descarga el modelo (libera VRAM) tras este tiempo sin uso
     embedding_worker_startup_timeout: float = 120.0
     embedding_request_timeout: float = 60.0
+    reference_search_backend: str = "exact"  # exact (NumPy, por defecto) | pgvector (opcional)
     embedding_retry_cooldown_seconds: float = 60.0  # tras un fallo del primario se usa el respaldo este tiempo
 
     max_image_bytes: int = 4_000_000
