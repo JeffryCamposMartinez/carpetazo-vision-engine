@@ -448,3 +448,15 @@ def test_sync_runs_on_the_real_lab_postgres_and_is_idempotent_there_too():
         assert rep["counts"]["cards"]["retired"] == 1 and s.get(MirrorCard, (3, 1002)).retired_at is not None
         assert plan(s, make_client(api)[0], SyncOptions(), now=t0 + timedelta(days=3))["estimated_requests"] == 2
     eng.dispose()
+
+
+def test_cli_output_survives_a_windows_cp1252_console(tmp_path, monkeypatch):
+    import io
+
+    db = tmp_path / "w.db"
+    Base.metadata.create_all(create_engine(f"sqlite:///{db}"))
+    monkeypatch.setattr(mirror_cli, "_client", lambda a: make_client(FakeApi())[0])
+    raw = io.BytesIO()
+    monkeypatch.setattr("sys.stdout", io.TextIOWrapper(raw, encoding="cp1252", write_through=True))
+    assert mirror_cli.main(["sync", "--dry-run", "--database-url", f"sqlite:///{db}"]) == 0  # el aviso del limitador lleva «≈»
+    assert "estimated_requests" in raw.getvalue().decode("utf-8")

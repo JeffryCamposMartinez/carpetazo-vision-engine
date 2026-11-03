@@ -45,3 +45,11 @@ Base por defecto: `https://api.carpetazo.cl/api` (la que usa el frontend). El cl
 
 ## Esquema (migración `0006`)
 `mirror_sync_runs`, `mirror_games`, `mirror_sets` (PK `category_id, group_id`), `mirror_cards` (PK `category_id, product_id`; FK RESTRICT a juego y edición), `mirror_changes`. Ninguna clave foránea hace cascada: el espejo nunca borra por arrastre.
+
+## Resultado del dry-run real (2026-11-03, 2 peticiones GET a la API pública)
+`sync --dry-run` pidió únicamente las dos listas de ediciones y no escribió nada:
+| Categoría | Ediciones listadas | Ediciones a descargar (base vacía) |
+|---|---|---|
+| 3 (Pokémon inglés) | 216 | 216 |
+| 100 (Pokémon español) | 266 | 266 |
+**Peticiones estimadas para la primera sincronización: 484** (2 listas + 482 ediciones), ≈ 8,1 minutos con pausa de 1 s, dentro de una sola ventana del limitador (2000 por 15 minutos). Las respuestas de la categoría 100 repiten los productos ingleses de cada edición con su imagen en español, por lo que su volumen de datos será mayor que el de la categoría 3. Las siguientes sincronizaciones descargan solo las ediciones cuyo `modifiedOn` cambió o que superen `--max-age-days`.

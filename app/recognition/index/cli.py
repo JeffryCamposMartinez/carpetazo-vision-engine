@@ -92,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--seed", type=int, default=11)
     s.add_argument("--report")
     s.set_defaults(func=cmd_compare)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # la consola de Windows (cp1252) no puede imprimir todos los caracteres
     a = p.parse_args(argv)
     try:
         return a.func(a)

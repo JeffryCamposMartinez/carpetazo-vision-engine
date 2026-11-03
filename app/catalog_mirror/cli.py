@@ -84,6 +84,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("status")
     s.add_argument("--database-url", required=True)
     s.set_defaults(func=cmd_status)
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # la consola de Windows (cp1252) no puede imprimir todos los caracteres
     a = p.parse_args(argv)
     try:
         return a.func(a)
