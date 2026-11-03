@@ -1,0 +1,3 @@
+filename,lighting_condition,camera_angle,background,sleeve_condition,glare,focus_quality,notes
+EJEMPLO_IMG_0001.jpg,natural_directa,frontal,neutro_claro,sin_funda,ninguno,,FILA DE EJEMPLO: borra esta fila y usa los nombres reales
+EJEMPLO_IMG_0002.jpg,interior_calida,inclinada_media,madera,funda_transparente,leve,,FILA DE EJEMPLO

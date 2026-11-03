@@ -14,6 +14,7 @@ WSL2 ni virtualización.
 | Inventario/matching/auditoría de imágenes de R2 (solo lectura) | Implementado |
 | Propuestas de asociación R2 → carta (separadas de las aprobadas) | Implementado |
 | Laboratorio de reconocimiento (`app/recognition_lab`): detección clásica, líneas base, índice, benchmark **sintético** | Experimental, aislado de la API |
+| Sistema de captura y anotación de fotografías reales (`app/dataset_lab`, 100 % local; `docs/dataset/`) | Implementado; **sin fotos reales todavía** |
 | Detección aprendida, embeddings profundos (DINOv2/SigLIP), OCR, cámara continua | **Pendiente** |
 
 Mientras no exista reconocimiento, `/v1/scan` devuelve `unknown` o `poor_quality` con `recognition_available: false`.
@@ -48,6 +49,7 @@ Si PowerShell bloquea los scripts: `Set-ExecutionPolicy -Scope CurrentUser Remot
 | `migrate.ps1 [-Action up\|down\|current\|history] [-Revision]` | Alembic; muestra el destino, confirma los `down` y rechaza servidores no locales sin `-AllowRemote` |
 | `verify-postgres.ps1 [-ExpectMigrated]` | Diagnóstico de PostgreSQL, pgvector, migraciones, tablas e índices (solo lectura) |
 | `create-dev-db.ps1` | Crea usuario y bases exclusivas de desarrollo/pruebas |
+| `dataset.ps1 <comando>` | Herramienta local del dataset de fotos reales (import, review, validate, split, export, backup, evaluate) |
 
 ## Pruebas
 
@@ -89,6 +91,7 @@ Ver `.env.example` (con comentarios). Las obligatorias: `VISION_SECRET_KEY`, `VI
 | `docs/catalog-model.md` | Modelo del catálogo, variantes, idiomas, identidad de cartas, decisiones pendientes |
 | `docs/catalog-import-runbook.md` | Importador TCGdex: comandos, garantías y recuperación |
 | `docs/recognition/` | Investigación de reconocimiento visual: comparativa de repositorios y licencias, auditoría de R2, arquitectura, diseño de dataset, benchmark sintético y experimento con DINOv2-small (`06-…`; entorno ML aparte: `scripts\ml\setup-ml-env.ps1`) |
+| `docs/dataset/` | Dataset de fotografías reales: protocolo de captura, esquema, herramienta, protocolo de evaluación sin fuga y cómo repetir el experimento |
 | `evaluation/set_aliases.schema.json` | Esquema de alias de sets y de asociaciones por objeto |
 
 ## Docker (opcional)
