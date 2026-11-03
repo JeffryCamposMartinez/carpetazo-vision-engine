@@ -77,3 +77,23 @@ def test_jpeg_accepted(client, session_headers):
     rng = np.random.default_rng(1)
     data = encode(rng.integers(0, 256, (800, 600, 3), dtype=np.uint8), ".jpg")
     assert _post(client, session_headers, data, name="f.jpg").status_code == 200
+
+
+def test_demo_ui_is_off_by_default(client):
+    assert client.get("/demo/").status_code == 404
+
+
+def test_demo_ui_is_served_only_when_enabled(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    monkeypatch.setenv("VISION_DEMO_UI_ENABLED", "true")
+    get_settings.cache_clear()
+    try:
+        r = TestClient(create_app()).get("/demo/")
+        assert r.status_code == 200 and "/v1/scan" in r.text
+    finally:
+        monkeypatch.delenv("VISION_DEMO_UI_ENABLED")
+        get_settings.cache_clear()

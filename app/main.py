@@ -1,6 +1,8 @@
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import catalog, health, scans, sessions
 from app.core.config import get_settings
@@ -23,6 +25,8 @@ def create_app() -> FastAPI:
     app.state.scan_service = ScanService(settings)
     for module in (health, sessions, scans, catalog):
         app.include_router(module.router)
+    if settings.demo_ui_enabled:
+        app.mount("/demo", StaticFiles(directory=Path(__file__).parent / "demo_ui", html=True), name="demo")
     return app
 
 

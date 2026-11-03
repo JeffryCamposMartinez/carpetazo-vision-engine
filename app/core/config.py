@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     session_ttl_seconds: int = 900
 
+    # Interfaz de demostración local (app/demo_ui, servida en /demo). Desactivada por defecto; no usar en producción.
+    demo_ui_enabled: bool = False
+
     max_image_bytes: int = 4_000_000
     min_image_side: int = 320
     max_image_side: int = 4096

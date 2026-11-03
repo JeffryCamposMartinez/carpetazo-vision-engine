@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision Engine · Demo local</title>
+<style>
+  :root {
+    --bg: #1a2b4b; --bg-deep: #0f1c36; --panel: rgba(17, 39, 74, .62); --panel-border: rgba(147, 197, 253, .22);
+    --text: #eaf1ff; --muted: #9fb4d6; --accent: #60a5fa; --accent-strong: #3b82f6;
+    --ok: #34d399; --warn: #fbbf24; --bad: #f87171; --info: #93c5fd;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100svh; color: var(--text);
+    font-family: "Space Grotesk", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    background: radial-gradient(1200px 600px at 15% -10%, #27457a 0%, transparent 60%), radial-gradient(900px 500px at 100% 110%, #1d3a6b 0%, transparent 55%), var(--bg);
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 16px 56px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), #1d4ed8); display: grid; place-items: center; font-weight: 700; box-shadow: 0 6px 20px rgba(59, 130, 246, .35); }
+  h1 { font-size: 1.2rem; margin: 0; letter-spacing: .01em; }
+  .sub { color: var(--muted); font-size: .82rem; }
+  .pill { font-size: .75rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--panel-border); color: var(--muted); background: rgba(8, 18, 42, .35); }
+  .pill.on { color: var(--ok); border-color: rgba(52, 211, 153, .4); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--panel-border); border-radius: var(--radius); padding: 18px; backdrop-filter: blur(8px); }
+  .card h2 { margin: 0 0 12px; font-size: .95rem; text-transform: uppercase; letter-spacing: .08em; color: var(--info); }
+  label.field { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 6px; }
+  input[type=password] { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--panel-border); background: rgba(8, 18, 42, .55); color: var(--text); font: inherit; }
+  input[type=password]:focus-visible, button:focus-visible, .drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hint { font-size: .75rem; color: var(--muted); margin-top: 6px; }
+  .drop { margin-top: 14px; border: 2px dashed var(--panel-border); border-radius: 14px; min-height: 260px; display: grid; place-items: center; text-align: center; padding: 14px; cursor: pointer; transition: border-color .15s, background .15s; position: relative; overflow: hidden; }
+  .drop.over, .drop:hover { border-color: var(--accent); background: rgba(96, 165, 250, .08); }
+  .drop img { max-width: 100%; max-height: 340px; border-radius: 10px; display: block; }
+  .drop p { margin: 0; color: var(--muted); }
+  .drop strong { color: var(--text); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 11px 18px; cursor: pointer; color: #fff; background: linear-gradient(135deg, var(--accent-strong), #1d4ed8); box-shadow: 0 6px 18px rgba(59, 130, 246, .3); transition: transform .12s, opacity .12s; }
+  button:hover:not(:disabled) { transform: translateY(-1px); }
+  button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  button.ghost { background: rgba(8, 18, 42, .5); border: 1px solid var(--panel-border); box-shadow: none; color: var(--text); }
+  .steps { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+  .steps li { display: flex; align-items: center; gap: 10px; font-size: .85rem; color: var(--muted); }
+  .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--panel-border); flex: none; display: grid; place-items: center; font-size: 11px; }
+  .steps li.run { color: var(--text); } .steps li.run .dot { border-color: var(--accent); animation: pulse 1s infinite; }
+  .steps li.done { color: var(--text); } .steps li.done .dot { background: var(--ok); border-color: var(--ok); color: #052e22; }
+  .steps li.fail { color: var(--bad); } .steps li.fail .dot { background: var(--bad); border-color: var(--bad); color: #3b0a0a; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 5px rgba(96, 165, 250, .25); } }
+  @media (prefers-reduced-motion: reduce) { .steps li.run .dot { animation: none; } button:hover:not(:disabled) { transform: none; } }
+  .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-weight: 700; font-size: .85rem; border: 1px solid; }
+  .badge.ok { color: var(--ok); border-color: rgba(52, 211, 153, .45); background: rgba(52, 211, 153, .1); }
+  .badge.warn { color: var(--warn); border-color: rgba(251, 191, 36, .45); background: rgba(251, 191, 36, .1); }
+  .badge.bad { color: var(--bad); border-color: rgba(248, 113, 113, .45); background: rgba(248, 113, 113, .1); }
+  .badge.info { color: var(--info); border-color: rgba(147, 197, 253, .45); background: rgba(147, 197, 253, .1); }
+  .notice { margin: 12px 0; padding: 12px 14px; border-radius: 12px; font-size: .85rem; line-height: 1.45; border: 1px solid; }
+  .notice.info { border-color: rgba(147, 197, 253, .35); background: rgba(147, 197, 253, .08); }
+  .notice.bad { border-color: rgba(248, 113, 113, .45); background: rgba(248, 113, 113, .09); color: #fecaca; }
+  .notice b { color: #fff; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 12px 0 0; font-size: .85rem; }
+  dt { color: var(--muted); } dd { margin: 0; word-break: break-all; }
+  .meter { height: 6px; border-radius: 6px; background: rgba(8, 18, 42, .6); overflow: hidden; margin-top: 4px; }
+  .meter > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--ok)); }
+  .cands { display: grid; gap: 10px; margin-top: 12px; }
+  .cand { padding: 12px 14px; border-radius: 12px; border: 1px solid var(--panel-border); background: rgba(8, 18, 42, .4); }
+  .cand .name { font-weight: 700; } .cand .meta { color: var(--muted); font-size: .82rem; margin-top: 2px; }
+  details { margin-top: 14px; } summary { cursor: pointer; color: var(--muted); font-size: .82rem; }
+  pre { background: rgba(8, 18, 42, .7); border-radius: 10px; padding: 12px; overflow: auto; font-size: .75rem; max-height: 260px; }
+  .empty { color: var(--muted); font-size: .9rem; }
+  footer { margin-top: 24px; color: var(--muted); font-size: .75rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo" aria-hidden="true">C</div>
+      <div><h1>Carpetazo Vision Engine</h1><div class="sub">Demostración local · /v1/scan</div></div>
+    </div>
+    <span class="pill" id="sessionPill">Sin sesión</span>
+  </header>
+
+  <div class="grid">
+    <section class="card" aria-labelledby="h-in">
+      <h2 id="h-in">1 · Imagen</h2>
+      <label class="field" for="key">Clave de servicio (solo para crear la sesión de esta pestaña)</label>
+      <input id="key" type="password" autocomplete="off" placeholder="X-Service-Key">
+      <div class="hint">Se guarda solo en esta pestaña (sessionStorage) y se envía únicamente a este servidor.</div>
+
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Elegir o arrastrar una imagen">
+        <div id="dropEmpty"><p><strong>Arrastra una imagen aquí</strong><br>o haz clic para elegirla (JPEG, PNG o WebP, máx. 4 MB)</p></div>
+        <img id="preview" alt="Vista previa de la imagen seleccionada" hidden>
+      </div>
+      <input id="file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+      <div class="row">
+        <button id="go" disabled>Escanear</button>
+        <button id="again" class="ghost" hidden>Escanear otra imagen</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-out" aria-live="polite">
+      <h2 id="h-out">2 · Resultado</h2>
+      <ol class="steps" id="steps">
+        <li data-s="session"><span class="dot"></span>Crear sesión · POST /v1/sessions</li>
+        <li data-s="scan"><span class="dot"></span>Enviar imagen · POST /v1/scan</li>
+        <li data-s="get"><span class="dot"></span>Consultar resultado · GET /v1/scan/{scan_id}</li>
+      </ol>
+      <div id="result"><p class="empty">Elige una imagen y pulsa «Escanear».</p></div>
+    </section>
+  </div>
+  <footer>Interfaz de demostración local. Solo muestra lo que devuelve la API; no simula reconocimiento.</footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const STATUS = {
+  confirmed: ["Carta confirmada", "ok"], probable: ["Coincidencia probable", "ok"], ambiguous: ["Resultado ambiguo", "warn"],
+  unknown: ["Sin coincidencia", "info"], poor_quality: ["Imagen de baja calidad", "bad"], not_a_card: ["No parece una carta", "bad"],
+};
+const state = { token: null, sessionId: null, expiresAt: 0, file: null, busy: false };
+
+function el(tag, attrs = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === "class") n.className = v; else n.setAttribute(k, v); }
+  for (const c of kids) n.append(c);
+  return n;
+}
+function setStep(name, status) {
+  const li = document.querySelector(`[data-s="${name}"]`);
+  li.className = status; li.querySelector(".dot").textContent = status === "done" ? "✓" : status === "fail" ? "!" : "";
+}
+function resetSteps() { ["session", "scan", "get"].forEach((s) => setStep(s, "")); }
+
+class ApiError extends Error { constructor(status, code, detail) { super(detail); this.status = status; this.code = code; } }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  let body = null;
+  try { body = await r.json(); } catch (_) { /* respuesta sin JSON */ }
+  if (!r.ok) {
+    const d = body && body.detail;
+    throw new ApiError(r.status, (d && d.error) || (typeof d === "string" ? "" : "error"), (d && d.detail) || (typeof d === "string" ? d : `HTTP ${r.status}`));
+  }
+  return { body, headers: r.headers };
+}
+
+async function ensureSession() {
+  if (state.token && Date.now() < state.expiresAt - 15000) return;
+  const key = $("key").value.trim();
+  if (!key) throw new ApiError(0, "missing_key", "Escribe la clave de servicio para crear la sesión.");
+  setStep("session", "run");
+  const { body } = await api("/v1/sessions", { method: "POST", headers: { "X-Service-Key": key, "Content-Type": "application/json" }, body: "{}" });
+  state.token = body.token; state.sessionId = body.session_id; state.expiresAt = Date.parse(body.expires_at);
+  try { sessionStorage.setItem("vision-demo-key", key); } catch (_) { /* almacenamiento no disponible */ }
+  $("sessionPill").textContent = "Sesión " + body.session_id.slice(0, 8) + "…"; $("sessionPill").classList.add("on");
+  setStep("session", "done");
+}
+
+const bearer = () => ({ Authorization: "Bearer " + state.token });
+
+async function scan() {
+  if (state.busy || !state.file) return;
+  state.busy = true; $("go").disabled = true; resetSteps(); $("result").replaceChildren(el("p", { class: "empty" }, "Procesando…"));
+  let phase = "session";
+  try {
+    await ensureSession();
+    phase = "scan"; setStep("scan", "run");
+    const fd = new FormData(); fd.append("file", state.file); fd.append("session_id", state.sessionId);
+    const posted = await api("/v1/scan", { method: "POST", headers: { ...bearer(), "Idempotency-Key": crypto.randomUUID() }, body: fd });
+    setStep("scan", "done");
+    phase = "get"; setStep("get", "run");
+    const fetched = await api("/v1/scan/" + encodeURIComponent(posted.body.scan_id), { headers: bearer() });
+    setStep("get", "done");
+    render(fetched.body, posted.body);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401 && phase !== "session") { state.token = null; }
+    setStep(phase, "fail");
+    const hints = { 401: "Clave o sesión inválida o expirada.", 413: "La imagen supera el tamaño máximo (4 MB).", 415: "Formato no soportado: usa JPEG, PNG o WebP.", 422: "La imagen no se pudo procesar.", 429: "Demasiadas solicitudes: espera un momento.", 409: "Ya hay un escaneo en curso.", 503: "Servidor ocupado: reintenta." };
+    const n = el("div", { class: "notice bad", role: "alert" }, el("b", {}, e instanceof ApiError && e.status ? `Error ${e.status}${e.code ? " · " + e.code : ""}` : "Error"), el("br"), e.message, e.status && hints[e.status] ? el("div", { class: "hint" }, hints[e.status]) : "");
+    $("result").replaceChildren(n);
+  } finally {
+    state.busy = false; $("go").disabled = !state.file; $("again").hidden = false;
+  }
+}
+
+function render(r, posted) {
+  const [label, tone] = STATUS[r.status] || [r.status, "info"];
+  const out = $("result"); out.replaceChildren();
+  out.append(el("span", { class: "badge " + tone }, label), " ", el("span", { class: "sub" }, `estado API: ${r.status}`));
+  if (r.message) out.append(el("p", { class: "sub", style: "margin:10px 0 0" }, r.message));
+
+  if (!r.recognition_available) {
+    out.append(el("div", { class: "notice info" }, el("b", {}, "El reconocimiento no está disponible en la API todavía."), el("br"),
+      "La API (recognition_available = false) solo valida la imagen y mide su calidad. «Sin coincidencia» aquí significa que no se intentó reconocer; no hay cartas candidatas ni puntuaciones que mostrar."));
+  }
+
+  const cands = [];
+  if (r.card) cands.push({ card: r.card, printing: r.printing, main: true });
+  for (const a of r.alternatives || []) cands.push({ card: a.card, printing: a.printing });
+  if (cands.length) {
+    const list = el("div", { class: "cands" });
+    for (const c of cands) {
+      const p = c.printing || {};
+      const meta = [p.set, p.collector_number && "N.º " + p.collector_number, p.language, p.variant].filter(Boolean).join(" · ");
+      list.append(el("div", { class: "cand" }, el("div", { class: "name" }, (c.main ? "★ " : "") + c.card.name), el("div", { class: "meta" }, meta || "Sin datos de impresión"), el("div", { class: "meta" }, "id: " + c.card.id)));
+    }
+    out.append(el("h2", { style: "margin-top:16px" }, "Candidatas"), list,
+      el("div", { class: "hint" }, "La API no devuelve imágenes ni puntuaciones de similitud en este esquema, por eso no se muestran."));
+  } else if (r.recognition_available) {
+    out.append(el("div", { class: "notice info" }, el("b", {}, "No se encontró ninguna coincidencia.")));
+  }
+
+  const q = r.quality || {};
+  const dl = el("dl");
+  const add = (k, v) => { dl.append(el("dt", {}, k), el("dd", {}, v)); };
+  add("Nitidez (laplaciano)", q.sharpness == null ? "—" : String(q.sharpness));
+  add("Brillo medio (0–255)", q.lighting == null ? "—" : String(q.lighting));
+  add("Perspectiva", q.perspective == null ? "no medida (sin detector)" : String(q.perspective));
+  add("scan_id", r.scan_id); add("model_version", r.model_version == null ? "—" : r.model_version);
+  add("recognition_available", String(r.recognition_available));
+  out.append(el("h2", { style: "margin-top:16px" }, "Calidad y trazas"), dl);
+  if (q.lighting != null) { const m = el("div", { class: "meter", "aria-hidden": "true" }, el("i", { style: `width:${Math.max(0, Math.min(100, q.lighting / 2.55))}%` })); out.append(m); }
+  const pre = el("pre"); pre.textContent = JSON.stringify({ "POST /v1/scan": posted, "GET /v1/scan/{scan_id}": r }, null, 2);
+  out.append(el("details", {}, el("summary", {}, "Ver respuestas JSON de la API"), pre));
+}
+
+function pick(file) {
+  if (!file) return;
+  state.file = file; const url = URL.createObjectURL(file);
+  const img = $("preview"); img.onload = () => URL.revokeObjectURL(url); img.src = url; img.hidden = false; $("dropEmpty").hidden = true;
+  $("go").disabled = false; resetSteps(); $("result").replaceChildren(el("p", { class: "empty" }, `Lista: ${file.name} (${(file.size / 1024).toFixed(0)} KB). Pulsa «Escanear».`));
+}
+function reset() {
+  state.file = null; $("file").value = ""; $("preview").hidden = true; $("preview").removeAttribute("src"); $("dropEmpty").hidden = false;
+  $("go").disabled = true; $("again").hidden = true; resetSteps(); $("result").replaceChildren(el("p", { class: "empty" }, "Elige una imagen y pulsa «Escanear»."));
+}
+
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => pick(e.dataTransfer.files[0]));
+$("file").addEventListener("change", (e) => pick(e.target.files[0]));
+$("go").addEventListener("click", scan);
+$("again").addEventListener("click", reset);
+$("key").addEventListener("input", () => { state.token = null; $("sessionPill").textContent = "Sin sesión"; $("sessionPill").classList.remove("on"); });
+try { const k = sessionStorage.getItem("vision-demo-key"); if (k) $("key").value = k; } catch (_) { /* sin almacenamiento */ }
+</script>
+</body>
+</html>
