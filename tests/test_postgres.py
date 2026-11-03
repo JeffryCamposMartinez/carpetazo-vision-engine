@@ -94,7 +94,7 @@ def current(engine):
 
 def test_upgrade_from_empty_creates_schema_constraints_and_indexes(engine):
     migrate(engine, "upgrade", "head")
-    assert current(engine) == "0005"
+    assert current(engine) == "0006"
     insp = inspect(engine)
     assert (OLD_TABLES | NEW_TABLES) <= set(insp.get_table_names())
 
@@ -177,7 +177,7 @@ def test_downgrade_roundtrip_to_base_and_back(engine):
     migrate(engine, "downgrade", "base")
     assert set(inspect(engine).get_table_names()) <= {"alembic_version"}
     migrate(engine, "upgrade", "head")
-    assert current(engine) == "0005"
+    assert current(engine) == "0006"
 
 
 def test_0004_refuses_ambiguous_data_then_backfills_when_clean(engine):

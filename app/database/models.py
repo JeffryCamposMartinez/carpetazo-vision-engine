@@ -341,4 +341,4 @@ class ImageMappingProposal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-from app.database import reference_models  # noqa: E402,F401  (registra las tablas del índice de referencias en Base.metadata)
+from app.database import mirror_models, reference_models  # noqa: E402,F401  (registra las tablas del índice de referencias en Base.metadata)

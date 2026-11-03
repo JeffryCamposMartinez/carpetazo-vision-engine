@@ -170,7 +170,7 @@ def test_rollback_to_base_and_upgrade_again_with_the_real_extension(real):
         scalar(real, "SELECT count(*) FROM pg_extension WHERE extname = 'vector'") == 1
     )  # la extensión no se borra al revertir
     migrate(real, "upgrade", "head")
-    assert scalar(real, "SELECT version_num FROM alembic_version") == "0005"
+    assert scalar(real, "SELECT version_num FROM alembic_version") == "0006"
 
 
 def test_the_extension_exists_only_in_the_test_database(real):
