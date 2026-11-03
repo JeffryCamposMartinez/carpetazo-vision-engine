@@ -8,3 +8,4 @@ ignore = ["B008"]  # Depends()/Query() en defaults es el idioma de FastAPI
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["postgres: integración con PostgreSQL nativo; requiere VISION_TEST_POSTGRES_URL (ver docs/postgres-windows.md)"]

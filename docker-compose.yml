@@ -1,5 +1,5 @@
-# SOLO desarrollo local. En Coolify se despliega el Dockerfile como recurso "Carpetazo Scanner"
-# con su propia base de datos; no uses este archivo contra el VPS de producción.
+# OPCIONAL y NO necesario: el desarrollo local usa PostgreSQL nativo (docs/postgres-windows.md).
+# Se conserva como referencia para entornos con contenedores; no lo uses contra el VPS de producción.
 services:
   db:
     image: pgvector/pgvector:pg16

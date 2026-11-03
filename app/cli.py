@@ -8,6 +8,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import sessionmaker
 
+from app.catalog.importers.tcgdex import TcgdexImporter, configure_import_logging, render_report_md
 from app.catalog.providers.tcgdex import ProviderError, TcgdexClient
 from app.core.config import get_settings
 from app.database.session import get_engine
@@ -24,6 +25,7 @@ from app.images.inventory import (
     parse_card_folder,
 )
 from app.images.matching import match_inventory, read_manifest_csv, summarize, write_manifest
+from app.images.proposals import load_proposals
 from app.images.set_review import review_sets, write_review
 from app.images.sets import resolve_sets, sets_report
 from app.storage.base import StorageError
@@ -77,6 +79,44 @@ def cmd_catalog_variant_probe(args: argparse.Namespace) -> int:
     probe = {"language": args.language, "cards": [client.card_variants(c, args.language) for c in args.card]}
     _write_json(Path(args.out), probe)
     print(f"Variantes consultadas: {len(probe['cards'])} cartas -> {args.out}")
+    return 0
+
+
+def cmd_catalog_import(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    importer = TcgdexImporter(TcgdexClient(settings), sessionmaker(bind=get_engine(), expire_on_commit=False))
+    configure_import_logging()
+    try:
+        report = importer.run(
+            languages=tuple(args.language or ["en"]),
+            set_ids=set(args.set) if args.set else None,
+            max_cards=args.max_cards,
+            resume=args.resume,
+            dry_run=args.dry_run,
+        )
+    except KeyboardInterrupt:
+        print("Importación interrumpida: reanuda con --resume y los mismos parámetros.", file=sys.stderr)
+        return 130
+    data = report.to_dict()
+    out = Path(args.report_dir)
+    _write_json(out / "tcgdex-import-report.json", data)
+    (out / "tcgdex-import-report.md").write_text(render_report_md(data), encoding="utf-8")
+    print(json.dumps({k: data[k] for k in ("status", "run_id", "entities", "external_references_created")}, indent=1))
+    print(f"Errores: {len(data['errors'])} · duplicados: {len(data['duplicates'])} · reporte: {out}")
+    return 0 if report.status in {"completed", "completed_with_errors"} else 1
+
+
+def cmd_images_load_proposals(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    with _session() as db:
+        result = load_proposals(
+            db,
+            settings.s3_bucket or "",
+            Path(args.manifest),
+            Path(args.object_proposals) if args.object_proposals else None,
+        )
+        db.commit()
+    print(json.dumps(result, indent=1, ensure_ascii=False))
     return 0
 
 
@@ -241,6 +281,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data-json-cache", default=str(REPORTS / "r2-datajson.json"))
     p.add_argument("--variant-probe", default=str(REPORTS / "tcgdex-variant-probe.json"))
     p.add_argument("--out-dir", default=str(REPORTS))
+
+    p = add("catalog-import", cmd_catalog_import, "Importa el catálogo de TCGdex a PostgreSQL (sin imágenes)")
+    p.add_argument("--language", action="append", help="Idioma del catálogo; repetible. Por defecto: en")
+    p.add_argument("--set", action="append", help="Id de set de TCGdex; repetible")
+    p.add_argument("--max-cards", type=int, help="Limita las cartas por set (pruebas)")
+    p.add_argument(
+        "--resume", action="store_true", help="Continúa la última importación incompleta con el mismo alcance"
+    )
+    p.add_argument("--dry-run", action="store_true", help="Hace todo dentro de una transacción y la revierte")
+    p.add_argument("--report-dir", default=str(REPORTS))
+
+    p = add(
+        "images-load-proposals", cmd_images_load_proposals, "Carga propuestas de asociación R2 (no crea asociaciones)"
+    )
+    p.add_argument("--manifest", default=str(REPORTS / "r2-manifest.json"))
+    p.add_argument("--object-proposals", default=str(REPORTS / "r2-object-mapping-proposals.json"))
 
     p = add("images-apply", cmd_images_apply, "Aplica un manifiesto CSV aprobado (columna approved=yes)")
     p.add_argument("--manifest", required=True)

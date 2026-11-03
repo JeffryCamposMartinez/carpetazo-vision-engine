@@ -8,7 +8,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -22,6 +22,16 @@ SERVICE_HEADERS = {"X-Service-Key": "service-key-a"}
 @pytest.fixture
 def db_factory():
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+
+    # Receta de SQLAlchemy para que SAVEPOINT funcione en pysqlite (los importadores usan transacciones anidadas).
+    @event.listens_for(engine, "connect")
+    def _no_autobegin(dbapi_conn, _):
+        dbapi_conn.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _begin(conn):
+        conn.exec_driver_sql("BEGIN")
+
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False)
 

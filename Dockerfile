@@ -1,3 +1,5 @@
+# OPCIONAL: no hace falta Docker para desarrollar, probar ni ejecutar el proyecto (ver README.md y docs/).
+# Se conserva como referencia para despliegues futuros (p. ej. Coolify).
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

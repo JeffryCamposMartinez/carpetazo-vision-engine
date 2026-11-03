@@ -62,10 +62,35 @@ class TcgdexClient:
             self._sleep(min(2**attempt, 10))
         raise AssertionError("inalcanzable")
 
+    @property
+    def base_url(self) -> str:
+        return self._s.tcgdex_base_url
+
+    game_slug = "pokemon"
+    game_name = "Pokémon TCG"
+
+    def list_sets(self, language: str) -> list[dict]:
+        data = self._get(f"/{language}/sets")
+        if not isinstance(data, list):
+            raise ProviderError(f"respuesta inesperada en /{language}/sets")
+        return data
+
+    def get_set(self, set_id: str, language: str) -> dict:
+        data = self._get(f"/{language}/sets/{set_id}")
+        if not isinstance(data, dict):
+            raise ProviderError(f"respuesta inesperada para el set {set_id}")
+        return data
+
+    def get_card(self, card_id: str, language: str) -> dict:
+        data = self._get(f"/{language}/cards/{card_id}")
+        if not isinstance(data, dict):
+            raise ProviderError(f"respuesta inesperada para la carta {card_id}")
+        return data
+
     def card_variants(self, card_id: str, language: str = "en") -> dict:
         """Solo las variantes de impresión de una carta (sin precios)."""
         d = self._get(f"/{language}/cards/{card_id}")
-        keep = ("type", "subtype", "stamp", "size")
+        keep = ("type", "subtype", "foil", "stamp", "size", "variantId")
         return {
             "id": d["id"],
             "name": d.get("name"),
