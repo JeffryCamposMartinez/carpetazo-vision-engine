@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     # Interfaz de demostración local (app/demo_ui, servida en /demo). Desactivada por defecto; no usar en producción.
     demo_ui_enabled: bool = False
 
+    # Embeddings visuales (E3). DINOv2-small corre en un proceso aparte (entorno ML independiente; sin torch aquí).
+    embedding_primary: str = "dinov2-small"  # dinov2-small | grid
+    embedding_ml_python: str | None = None  # por defecto ~/vision-ml-lab/venv/Scripts/python.exe
+    embedding_ml_home: str | None = None  # por defecto ~/vision-ml-lab/hf-home (pesos ya descargados; sin red)
+    embedding_device: str = "auto"  # auto | cuda | cpu
+    embedding_min_free_vram_mb: int = 700  # auto usa la GPU solo si queda al menos esta VRAM libre (GTX 960 de 2 GB)
+    embedding_worker_idle_seconds: float = 120.0  # descarga el modelo (libera VRAM) tras este tiempo sin uso
+    embedding_worker_startup_timeout: float = 120.0
+    embedding_request_timeout: float = 60.0
+    embedding_retry_cooldown_seconds: float = 60.0  # tras un fallo del primario se usa el respaldo este tiempo
+
     max_image_bytes: int = 4_000_000
     min_image_side: int = 320
     max_image_side: int = 4096
