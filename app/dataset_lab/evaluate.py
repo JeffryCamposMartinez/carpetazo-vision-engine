@@ -3,7 +3,8 @@
 
 - Galería = imágenes digitales de referencia verificadas (una por carta registrada) + distractores opcionales (identidad NO usada como verdad).
 - Consultas = fotos verified de sesiones del conjunto de PRUEBA. Los umbrales de rechazo se calibran SOLO con el conjunto de CALIBRACIÓN.
-- Cartas «desconocidas» = cartas verificadas cuya referencia se retira de la galería (--holdout-cards).
+- Cartas «desconocidas» = cartas verificadas cuya referencia se retira de la galería. Hay DOS grupos disjuntos: las de calibración
+  (solo se usan sus fotos de calibración) y las de prueba (solo sus fotos de prueba); ninguna carta se usa en ambos.
 - Se niega a producir métricas si los datos son ficticios (salvo --allow-fictitious, y entonces el informe lo declara) y marca como
   EXPLORATORIO todo lo que no alcance el mínimo de fotos de prueba.
 """
@@ -93,7 +94,8 @@ def run_evaluation(
     split_name: str,
     extractors: dict,
     distractors: list[dict] | None = None,
-    holdout_cards: int = 0,
+    holdout_calibration: int = 0,
+    holdout_test: int = 0,
     seed: int = 7,
     allow_fictitious: bool = False,
     max_side: int = 1600,
@@ -120,12 +122,29 @@ def run_evaluation(
     if {p["capture_session_id"] for p in cal} & {p["capture_session_id"] for p in test}:
         raise DatasetError("Una sesión aparece en calibración y prueba: partición inválida")
 
-    with_ref = sorted(r for r in cards if cards[r]["verification_status"] == "verified" and reference_file(ds, r))
+    with_ref = sorted(
+        r
+        for r in cards
+        if cards[r]["verification_status"] == "verified"
+        and cards[r].get("reference_verified_by")
+        and reference_file(ds, r)
+    )
     ranked = sorted(with_ref, key=lambda r: hashlib.sha256(f"{seed}:{r}".encode()).hexdigest())
-    holdout = set(ranked[:holdout_cards])
+    cal_holdout = set(ranked[:holdout_calibration])
+    test_holdout = set(ranked[holdout_calibration : holdout_calibration + holdout_test])
+    holdout = cal_holdout | test_holdout
+    excluded = [p for p in cal if p["card_ref"] in test_holdout] + [p for p in test if p["card_ref"] in cal_holdout]
+    cal = [
+        p for p in cal if p["card_ref"] not in test_holdout
+    ]  # las cartas desconocidas de prueba no se tocan en calibración
+    test = [p for p in test if p["card_ref"] not in cal_holdout]
+    if not test:
+        raise DatasetError("No quedan fotos de prueba tras apartar las cartas desconocidas de calibración")
     gallery_cards = [r for r in with_ref if r not in holdout]
     if not gallery_cards:
-        raise DatasetError("No hay referencias verificadas en la galería (ejecuta references-fetch)")
+        raise DatasetError(
+            "No hay referencias verificadas en la galería (verifica las referencias y ejecuta references-fetch)"
+        )
 
     def truth(p: dict) -> str | None:
         return p["card_ref"] if p["card_ref"] in gallery_cards else None
@@ -138,7 +157,7 @@ def run_evaluation(
         "created_at": now(), "evidence": evid,
         "dataset": {"manifest_sha256": hashlib.sha256((ds.manifest / "photos.json").read_bytes()).hexdigest(), "split": split_name,
                     "seed": seed, "calibration_photos": len(cal), "test_photos": len(test), "test_cards": len({p["card_ref"] for p in test}),
-                    "gallery_cards": len(gallery_cards), "holdout_unknown_cards": sorted(holdout), "distractors": len(distractors or []),
+                    "gallery_cards": len(gallery_cards), "holdout_calibration_cards": sorted(cal_holdout), "holdout_test_cards": sorted(test_holdout), "excluded_photos": len(excluded), "distractors": len(distractors or []),
                     "photos_without_reference": sum(1 for p in test if p["card_ref"] not in with_ref)},
         "extractors": {},
     }  # fmt: skip
@@ -172,11 +191,11 @@ def run_evaluation(
         cal_q = [(p, query(p)) for p in cal]
         thr = choose_threshold(
             [score_margin(r) for p, r in cal_q if truth(p)],
-            [score_margin(r) for p, r in cal_q if p["card_ref"] in holdout],
+            [score_margin(r) for p, r in cal_q if p["card_ref"] in cal_holdout],
         )
         test_q = [(p, query(p)) for p in test if p["card_ref"] in with_ref]
         known = [(p, r) for p, r in test_q if truth(p)]
-        unknown = [(p, r) for p, r in test_q if p["card_ref"] in holdout]
+        unknown = [(p, r) for p, r in test_q if p["card_ref"] in test_holdout]
         n = len(known)
 
         def hit(p, r, k, field=None, index=index):
@@ -225,6 +244,8 @@ def run_evaluation(
                 return r["detected"] and s >= thr["min_score"] and m >= thr["min_margin"]
 
             res["rejection"] = {
+                "unknown_test_photos": len(unknown),
+                "unknown_falsely_accepted_ci95": wilson(sum(accepted(r) for _, r in unknown), len(unknown)),
                 "unknown_falsely_accepted": round(sum(accepted(r) for _, r in unknown) / len(unknown), 3)
                 if unknown
                 else None,
@@ -253,7 +274,7 @@ def render_markdown(r: dict) -> str:
         lines += ["**Limitaciones de esta evaluación:**", *[f"- {x}" for x in r["evidence"]["reasons"]], ""]
     d = r["dataset"]
     lines += [f"Partición `{d['split']}` · {d['test_photos']} fotos de prueba · {d['test_cards']} cartas · {d['gallery_cards']} referencias en la galería · "
-              f"{len(d['holdout_unknown_cards'])} cartas retiradas (desconocidas) · {d['distractors']} distractores", ""]  # fmt: skip
+              f"{len(d['holdout_calibration_cards'])}+{len(d['holdout_test_cards'])} cartas desconocidas (calibración+prueba) · {d['distractors']} distractores", ""]  # fmt: skip
     for name, e in r["extractors"].items():
         ci = e["card_identity"]
         lines += [f"## {name}", f"- Identidad de carta: {ci}", f"- Impresión: {e['printing_identity']}", f"- Variante: {e['variant_identity']}",

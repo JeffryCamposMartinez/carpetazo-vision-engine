@@ -11,8 +11,8 @@ AVISO = "DATOS FICTICIOS DE EJEMPLO: no existen estas fotografías ni estas cart
 
 def build_example(out_dir: Path) -> dict:
     cards = {
-        "EJEMPLO-pc-001": dict(card_ref="EJEMPLO-pc-001", name="Carta Ficticia A", set_name="Set Ficticio", collector_number="001/100", language="es", finish="normal", category="comun", reference_object_key=None),
-        "EJEMPLO-pc-002": dict(card_ref="EJEMPLO-pc-002", name="Carta Ficticia B", set_name="Set Ficticio", collector_number="002/100", language="es", finish="holo", category="holo", reference_object_key=None),
+        "EJEMPLO-pc-001": dict(card_ref="EJEMPLO-pc-001", name="Carta Ficticia A", set_name="Set Ficticio", collector_number="001/100", language="es", finish="normal", categories=["comun"], pattern="ninguno", reference_object_key=None),
+        "EJEMPLO-pc-002": dict(card_ref="EJEMPLO-pc-002", name="Carta Ficticia B", set_name="Set Ficticio", collector_number="002/100", language="es", finish="holo", categories=["holo", "similar_dificil"], pattern="ninguno", reference_object_key=None),
     }  # fmt: skip
     plan = [
         ("EJEMPLO-pc-001", "EJEMPLO-sesion-1", "natural_directa", "frontal", "neutro_claro", "sin_funda", "buena", "ninguno", "calibration"),

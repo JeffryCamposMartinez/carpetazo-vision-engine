@@ -11,7 +11,7 @@ from app.dataset_lab.store import Dataset, DatasetError, atomic_write, now
 
 CSV_COLUMNS = [
     "image_id", "card_ref", "card_id", "printing_id", "variant_id", "name", "set_name", "collector_number", "language", "finish",
-    "category", "capture_session_id", "split", "device_model", "lighting_condition", "camera_angle", "background", "sleeve_condition",
+    "categories", "pattern", "capture_session_id", "split", "device_model", "lighting_condition", "camera_angle", "background", "sleeve_condition",
     "glare", "focus_quality", "verified_by", "verification_status", "notes", "width", "height", "sha256", "path", "sharpness",
     "brightness", "quality_flags", "reference_object_key", "provisional",
 ]  # fmt: skip
@@ -24,7 +24,7 @@ def photo_row(p: dict, card: dict | None, split: str | None, path: str, provisio
         "image_id": p["image_id"], "card_ref": p.get("card_ref"), "card_id": p.get("card_id"), "printing_id": p.get("printing_id"),
         "variant_id": p.get("variant_id"), "name": card.get("name"), "set_name": card.get("set_name"),
         "collector_number": card.get("collector_number"), "language": card.get("language"), "finish": card.get("finish"),
-        "category": card.get("category"), "capture_session_id": p["capture_session_id"], "split": split,
+        "categories": ";".join(card.get("categories") or []), "pattern": card.get("pattern"), "capture_session_id": p["capture_session_id"], "split": split,
         "device_model": p.get("device_model"), "lighting_condition": p.get("lighting_condition"), "camera_angle": p.get("camera_angle"),
         "background": p.get("background"), "sleeve_condition": p.get("sleeve_condition"), "glare": p.get("glare"),
         "focus_quality": p.get("focus_quality"), "verified_by": p.get("verified_by"), "verification_status": p["verification_status"],

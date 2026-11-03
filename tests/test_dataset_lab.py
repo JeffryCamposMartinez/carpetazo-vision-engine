@@ -61,7 +61,8 @@ def add_verified_card(ds, seed):
         collector_number=f"{seed:03d}/100",
         language="es",
         finish="normal",
-        category="comun",
+        categories=["comun"],
+        pattern="ninguno",
     )
     ds.verify_card(c["card_ref"], "tester", "comparada con la carta física (prueba)")
     return c["card_ref"]
@@ -347,6 +348,10 @@ def make_eval_dataset(ds, tmp_path, cards=6):
     for i in range(cards):
         ref = add_verified_card(ds, i + 1)
         cv2.imwrite(str(ds.references / f"{ref}.png"), fake_card(300 + i))  # referencia digital de la carta
+        cards_ = ds.cards
+        cards_[ref]["reference_object_key"] = f"prueba/{ref}.png"
+        ds.save_cards(cards_)
+        ds.verify_reference(ref, "t", "comparada con la carta física (prueba)")
         refs.append(ref)
         for sess, offset in (("s-test-a", 0), ("s-test-b", 1000)):
             folder = tmp_path / f"e-{ref}-{sess}"
@@ -377,29 +382,30 @@ def make_eval_dataset(ds, tmp_path, cards=6):
 def test_evaluation_flow_is_labelled_exploratory_and_uses_only_the_test_split(ds, tmp_path):
     make_eval_dataset(ds, tmp_path)
     make_split(ds, "p", manual={"s-test-a": "calibration", "s-test-b": "test"})
-    result = run_evaluation(ds, "p", {"phash": PHashExtractor(), "grid": GridExtractor()}, holdout_cards=2)
+    result = run_evaluation(
+        ds, "p", {"phash": PHashExtractor(), "grid": GridExtractor()}, holdout_calibration=1, holdout_test=1
+    )
     assert result["banner"].startswith("EXPLORATORIO") and result["evidence"]["level"] == "exploratorio"
-    assert any("solo 12 fotos de prueba" in r for r in result["evidence"]["reasons"])
+    assert any("solo 10 fotos de prueba" in r for r in result["evidence"]["reasons"])
     d = result["dataset"]
     assert (
-        d["calibration_photos"] == 12
-        and d["test_photos"] == 12
-        and len(d["holdout_unknown_cards"]) == 2
+        d["calibration_photos"] == 10
+        and d["test_photos"] == 10
         and d["gallery_cards"] == 4
+        and d["excluded_photos"] == 4
     )
+    assert len(d["holdout_calibration_cards"]) == 1 and len(d["holdout_test_cards"]) == 1
+    assert not set(d["holdout_calibration_cards"]) & set(d["holdout_test_cards"])  # desconocidas disjuntas
     g = result["extractors"]["grid"]
-    assert g["queries_known"] == 8 and g["queries_unknown"] == 4
+    assert g["queries_known"] == 8 and g["queries_unknown"] == 2
     assert (
         g["card_identity"]["n"] == 8
         and 0.0 <= g["card_identity"]["top1"] <= 1.0
         and len(g["card_identity"]["top1_ci95"]) == 2
     )
     assert g["printing_identity"]["n"] == 0 and g["variant_identity"]["n"] == 0  # sin ids verificados no se evalúan
-    assert g["calibration"] is not None and set(g["rejection"]) == {
-        "unknown_falsely_accepted",
-        "known_falsely_rejected",
-        "known_correct_and_accepted",
-    }
+    assert g["calibration"] is not None and g["rejection"]["unknown_test_photos"] == 2
+    assert {"unknown_falsely_accepted", "known_falsely_rejected", "known_correct_and_accepted"} <= set(g["rejection"])
     assert g["latency_ms"]["detect"]["p50"] > 0 and "lighting_condition" in g["breakdown_top1"]
 
 

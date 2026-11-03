@@ -89,38 +89,70 @@ class Dataset:
         place: str | None,
         operator: str | None,
         notes: str | None,
+        round_label: str | None = None,
     ) -> dict:
         if not _SESSION.match(session_id):
             raise DatasetError("session_id: 3–41 caracteres (letras, números, _ . -), p. ej. s-2026-11-05-a")
         sessions = self.sessions
         if session_id in sessions:
             raise DatasetError(f"La sesión {session_id} ya existe")
-        sessions[session_id] = {
+        record = {
             "capture_session_id": session_id, "date": date, "device_model": device_model, "place": place,
-            "operator": operator, "notes": notes, "created_at": now(),
+            "operator": operator, "notes": notes, "round": round_label, "created_at": now(),
         }  # fmt: skip
+        errors = schema.validate_session(record)
+        if errors:
+            raise DatasetError("; ".join(errors))
+        sessions[session_id] = record
         self.save_sessions(sessions)
-        return sessions[session_id]
+        return record
 
     # ---- cartas físicas
-    def add_card(self, **fields) -> dict:
+    def add_card(self, persist: bool = True, **fields) -> dict:
         cards = self.cards
         n = max((int(k.split("-")[1]) for k in cards), default=0) + 1
         ref = f"pc-{n:03d}"  # clave LOCAL del dataset, no un id del catálogo
         record = {
-            "card_ref": ref, "name": None, "set_name": None, "collector_number": None, "language": "unknown", "finish": "desconocido",
-            "category": "otra", "tcgdex_card_id": None, "card_id": None, "printing_id": None, "variant_id": None,
-            "reference_object_key": None, "reference_sha256": None, "condition_notes": None,
+            "card_ref": ref, "pilot_slot": None, "name": None, "set_name": None, "collector_number": None, "language": "unknown",
+            "finish": "desconocido", "categories": ["otra"], "pattern": "desconocido", "variant_group": None, "similar_to": None,
+            "difficulty_note": None, "tcgdex_card_id": None, "card_id": None, "printing_id": None, "variant_id": None,
+            "reference_object_key": None, "reference_sha256": None, "reference_verified_by": None, "reference_verified_at": None,
+            "reference_verification_note": None, "condition_notes": None,
             "verification_status": "unverified", "verified_by": None, "verified_at": None, "verification_note": None,
             "created_at": now(),
         }  # fmt: skip
-        record.update({k: v for k, v in fields.items() if k in record and v is not None})
-        errors = [e for e in schema.validate_card(record) if not e.startswith(("falta verified", "una carta verified"))]
+        unknown = set(fields) - set(record)
+        if unknown:
+            raise DatasetError(f"Campos desconocidos: {sorted(unknown)}")
+        record.update({k: v for k, v in fields.items() if v is not None})
+        errors = schema.validate_card(record)
         if errors:
             raise DatasetError("; ".join(errors))
-        cards[ref] = record
-        self.save_cards(cards)
+        if persist:
+            cards[ref] = record
+            self.save_cards(cards)
         return record
+
+    def verify_reference(self, card_ref: str, by: str, note: str) -> dict:
+        cards = self.cards
+        card = cards.get(card_ref)
+        if card is None or card["verification_status"] != "verified":
+            raise DatasetError("La carta debe existir y estar verificada antes de verificar su referencia")
+        if not card.get("reference_object_key"):
+            raise DatasetError("Primero indica la referencia con card-reference --key")
+        if not by.strip() or not note.strip():
+            raise DatasetError(
+                "Verificar la referencia exige --by y --note (qué se comparó: ilustración, número, símbolo, patrón)"
+            )
+        card.update(
+            {
+                "reference_verified_by": by.strip(),
+                "reference_verified_at": now(),
+                "reference_verification_note": note.strip(),
+            }
+        )
+        self.save_cards(cards)
+        return card
 
     def verify_card(self, card_ref: str, by: str, note: str) -> dict:
         cards = self.cards

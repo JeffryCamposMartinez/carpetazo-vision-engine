@@ -106,6 +106,26 @@ def make_split(
     return result
 
 
+def make_split_by_round(ds: Dataset, name: str) -> dict:
+    """Ronda A -> calibración, ronda B -> prueba. Cada sesión con fotos verificadas debe tener ronda."""
+    sessions = ds.sessions
+    used = eligible_sessions(ds)
+    no_round = [s for s in used if not sessions[s].get("round")]
+    if no_round:
+        raise DatasetError(f"Sesiones con fotos verificadas sin ronda A/B: {no_round} (corrige la sesión)")
+    mapping = {"A": "calibration", "B": "test"}
+    assignment = {s: mapping[sessions[s]["round"]] for s in used}
+    if set(assignment.values()) != {"calibration", "test"}:
+        raise DatasetError("Hace falta al menos una sesión de la ronda A y una de la ronda B con fotos verificadas")
+    result = {
+        "name": name, "created_at": now(), "seed": None, "unit": "capture_session",
+        "rule": "ronda A = calibración, ronda B = evaluación final (sin azar)",
+        "assignment": dict(sorted(assignment.items())), "coverage": coverage(ds, assignment), "leaks": leak_report(ds, assignment),
+    }  # fmt: skip
+    atomic_write(ds.splits_dir / f"{name}.json", result)
+    return result
+
+
 def load_split(ds: Dataset, name: str) -> dict:
     path = ds.splits_dir / f"{name}.json"
     if not path.exists():

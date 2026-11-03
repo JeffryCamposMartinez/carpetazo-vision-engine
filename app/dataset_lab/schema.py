@@ -23,7 +23,12 @@ GLARE = ("ninguno", "leve", "fuerte", "desconocido")
 PHOTO_STATUS = ("pending", "verified", "rejected", "needs_review")
 CARD_STATUS = ("unverified", "verified")
 FINISH = ("normal", "holo", "reverse_holo", "full_art", "promo", "otro", "desconocido")
-CATEGORY = ("comun", "full_art", "holo", "reverse_holo", "promo", "antigua", "variante_patron", "arte_similar", "otra")
+# Categorías del piloto (solapables: una carta puede pertenecer a varias). Objetivo inicial: >= 5 cartas por categoría.
+PILOT_CATEGORIES = ("comun", "holo", "reverse_holo", "full_art", "promo", "similar_dificil")
+EXTRA_CATEGORIES = ("antigua", "variante_patron", "otra")
+CATEGORY = PILOT_CATEGORIES + EXTRA_CATEGORIES
+PATTERN = ("ninguno", "pokeball", "masterball", "desconocido")
+ROUNDS = ("A", "B")  # A = calibración, B = evaluación final
 
 ENUMS = {
     "lighting_condition": LIGHTING, "camera_angle": ANGLE, "background": BACKGROUND, "sleeve_condition": SLEEVE,
@@ -79,8 +84,13 @@ def validate_card(c: dict) -> list[str]:
         errors.append(f"verification_status={c.get('verification_status')!r} inválido")
     if c.get("finish") not in FINISH:
         errors.append(f"finish={c.get('finish')!r} inválido")
-    if c.get("category") not in CATEGORY:
-        errors.append(f"category={c.get('category')!r} inválida")
+    cats = c.get("categories")
+    if not isinstance(cats, list) or not cats or any(x not in CATEGORY for x in cats):
+        errors.append(f"categories={cats!r} inválido (lista no vacía con valores de {CATEGORY})")
+    if c.get("pattern") not in PATTERN:
+        errors.append(f"pattern={c.get('pattern')!r} inválido ({PATTERN})")
+    if c.get("reference_verified_by") and not c.get("reference_object_key"):
+        errors.append("reference_verified_by sin reference_object_key")
     if not _LANG.match(str(c.get("language", ""))):
         errors.append(f"language={c.get('language')!r} inválido (use 'unknown' o un código como 'en')")
     for field in IDENTITY_FIELDS:
@@ -90,4 +100,11 @@ def validate_card(c: dict) -> list[str]:
         for field in ("verified_by", "verified_at", "verification_note"):
             if not c.get(field):
                 errors.append(f"una carta verified necesita {field}")
+    return errors
+
+
+def validate_session(sess: dict) -> list[str]:
+    errors = []
+    if sess.get("round") not in (None, *ROUNDS):
+        errors.append(f"round={sess.get('round')!r} inválida (use {ROUNDS} o null)")
     return errors
