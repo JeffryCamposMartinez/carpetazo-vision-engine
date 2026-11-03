@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app.catalog.providers.tcgdex import ProviderError, TcgdexClient
 from app.core.config import get_settings
 from app.database.session import get_engine
+from app.images.aliases import load_aliases
 from app.images.apply import apply_manifest, file_sha256, revert_associations
 from app.images.inventory import (
     DEFAULT_PREFIX,
@@ -21,6 +22,7 @@ from app.images.inventory import (
     load_data_jsons,
 )
 from app.images.matching import match_inventory, read_manifest_csv, summarize, write_manifest
+from app.images.set_review import review_sets, write_review
 from app.images.sets import resolve_sets, sets_report
 from app.storage.base import StorageError
 from app.storage.diagnose import diagnose, render_text
@@ -69,7 +71,10 @@ def cmd_catalog_snapshot(args: argparse.Namespace) -> int:
 
 
 def _load_aliases() -> dict[str, str]:
-    return {k: v for k, v in _load_json(ALIASES).items() if not k.startswith("_")} if ALIASES.exists() else {}
+    aliases, warnings = load_aliases(ALIASES)
+    for w in warnings:
+        print(f"Aviso: {w}", file=sys.stderr)
+    return aliases
 
 
 def _resolve(args):
@@ -87,6 +92,22 @@ def cmd_images_sets(args: argparse.Namespace) -> int:
     _write_json(Path(args.out), report)
     print(json.dumps({k: report[k] for k in ("catalog_sets", "r2_folders", "counts", "images_by_status")}, indent=1))
     print(f"Escrito: {args.out}")
+    return 0
+
+
+def cmd_images_sets_review(args: argparse.Namespace) -> int:
+    _, rows, snap, res = _resolve(args)
+    raw = _load_json(Path(args.data_json_cache)) if Path(args.data_json_cache).exists() else {}
+    data_json = {tuple(k.split("")): v for k, v in raw.items()}
+    unresolved = [f for f, r in res.items() if r.status == "unresolved"]
+    claimed: dict[str, list[str]] = {}
+    for folder, r in res.items():
+        if r.set_id:
+            claimed.setdefault(r.set_id, []).append(folder)
+    review = review_sets(rows, snap["sets"], unresolved, data_json, claimed=claimed)
+    paths = write_review(review, Path(args.out_dir))
+    print(json.dumps(review["summary"], indent=1, ensure_ascii=False))
+    print("Escrito:", ", ".join(str(p) for p in paths))
     return 0
 
 
@@ -170,6 +191,12 @@ def build_parser() -> argparse.ArgumentParser:
         else:
             p.add_argument("--out-dir", default=str(REPORTS))
             p.add_argument("--data-json-cache", default=str(REPORTS / "r2-datajson.json"))
+
+    p = add("images-sets-review", cmd_images_sets_review, "Revisión humana de carpetas de set sin resolver")
+    p.add_argument("--inventory", default=str(REPORTS / "r2-inventory.json"))
+    p.add_argument("--snapshot", default=str(REPORTS / "tcgdex-en-snapshot.json"))
+    p.add_argument("--data-json-cache", default=str(REPORTS / "r2-datajson.json"))
+    p.add_argument("--out-dir", default=str(REPORTS))
 
     p = add("images-apply", cmd_images_apply, "Aplica un manifiesto CSV aprobado (columna approved=yes)")
     p.add_argument("--manifest", required=True)

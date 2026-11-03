@@ -1,3 +1,4 @@
 {
-  "_nota": "Alias revisados a mano: nombre exacto de la carpeta de R2 -> id del set en TCGdex. Los valores inexistentes en el catálogo se ignoran con aviso."
+  "_nota": "Solo se usan entradas con status=confirmed, reviewed_by y reviewed_at rellenados a mano. Copia aquí las propuestas de evaluation/reports/r2-set-alias-proposals.json que apruebes.",
+  "aliases": []
 }
