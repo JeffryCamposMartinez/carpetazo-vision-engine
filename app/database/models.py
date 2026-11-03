@@ -2,7 +2,20 @@ import uuid
 from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -68,6 +81,7 @@ class Card(Base, Timestamps):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     game_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("games.id"))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("catalog_sources.id"))
     external_id: Mapped[str | None] = mapped_column(String(100))
     canonical_name: Mapped[str] = mapped_column(String(300))
     meta: Mapped[dict] = mapped_column("metadata", Json, default=dict)
@@ -88,6 +102,7 @@ class CardPrinting(Base, Timestamps):
     set_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sets.id"))
     source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("catalog_sources.id"))
     external_id: Mapped[str] = mapped_column(String(150))
+    name: Mapped[str | None] = mapped_column(String(300))  # nombre en el idioma de la impresión
     collector_number: Mapped[str | None] = mapped_column(String(30))
     language: Mapped[str] = mapped_column(String(10))
     rarity: Mapped[str | None] = mapped_column(String(100))
@@ -110,3 +125,82 @@ class CardEmbedding(Base):
     model_version: Mapped[str] = mapped_column(String(50))
     embedding = mapped_column(EmbeddingVector)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CardImage(Base):
+    """Imagen de referencia de una impresión. Solo se descarga si license_status es 'permitted'."""
+
+    __tablename__ = "card_images"
+    __table_args__ = (UniqueConstraint("printing_id", "source_url"), Index("ix_card_images_sha", "sha256"))
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    printing_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("card_printings.id", ondelete="CASCADE"))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("catalog_sources.id"))
+    source_url: Mapped[str] = mapped_column(Text)
+    license_status: Mapped[str] = mapped_column(String(20), default="unknown", server_default="unknown")
+    # pending | stored | skipped_unlicensed | failed
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    storage_key: Mapped[str | None] = mapped_column(Text)
+    content_type: Mapped[str | None] = mapped_column(String(30))
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    byte_size: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ImportRun(Base):
+    __tablename__ = "import_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    provider: Mapped[str] = mapped_column(String(50))
+    scope: Mapped[dict] = mapped_column(Json, default=dict)
+    scope_hash: Mapped[str] = mapped_column(String(64))
+    # running | completed | completed_with_errors | interrupted | failed
+    status: Mapped[str] = mapped_column(String(30), default="running")
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary: Mapped[dict | None] = mapped_column(Json)
+
+
+class ImportRunItem(Base):
+    __tablename__ = "import_run_items"
+    __table_args__ = (UniqueConstraint("run_id", "set_external_id", "language"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("import_runs.id", ondelete="CASCADE"))
+    set_external_id: Mapped[str] = mapped_column(String(100))
+    language: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(10))  # done | failed
+    error: Mapped[str | None] = mapped_column(Text)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ImageAssociation(Base):
+    """Relación auditable entre una impresión y un objeto de R2. Revertir no toca el objeto."""
+
+    __tablename__ = "image_associations"
+    __table_args__ = (
+        UniqueConstraint("printing_id", "bucket", "object_key"),
+        Index("ix_assoc_key", "bucket", "object_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    printing_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("card_printings.id", ondelete="CASCADE"))
+    provider: Mapped[str] = mapped_column(String(20), default="r2")
+    bucket: Mapped[str] = mapped_column(String(100))
+    object_key: Mapped[str] = mapped_column(Text)
+    etag: Mapped[str | None] = mapped_column(String(100))
+    size: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="approved")  # approved | reverted
+    method: Mapped[str | None] = mapped_column(String(100))
+    match_status: Mapped[str] = mapped_column(String(20))  # matched | probable (según el manifiesto)
+    evidence: Mapped[dict] = mapped_column(Json, default=dict)
+    manifest_sha256: Mapped[str] = mapped_column(String(64))
+    approved_by: Mapped[str] = mapped_column(String(100))
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reverted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reverted_by: Mapped[str | None] = mapped_column(String(100))

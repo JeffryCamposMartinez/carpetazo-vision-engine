@@ -12,8 +12,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://vision:vision@localhost:5434/vision"
 
     # Secretos: sin valor por defecto, el servicio no arranca sin ellos.
-    secret_key: SecretStr
-    service_api_keys: SecretStr  # claves del backend de Carpetazo, separadas por coma
+    # Obligatorios para la API (create_app lo comprueba); el CLI no los necesita.
+    secret_key: SecretStr | None = None
+    service_api_keys: SecretStr | None = None  # claves del backend de Carpetazo, separadas por coma
 
     session_ttl_seconds: int = 900
 
@@ -33,9 +34,43 @@ class Settings(BaseSettings):
     min_brightness: float = 40.0
     max_brightness: float = 220.0
 
+    # Proveedor de catálogo (TCGdex). Solo se llama desde el CLI, nunca al arrancar la API.
+    tcgdex_base_url: str = "https://api.tcgdex.net/v2"
+    provider_min_interval_seconds: float = 0.1  # ~10 peticiones/s como máximo
+    provider_timeout_seconds: float = 15.0
+    provider_max_retries: int = 3
+    provider_contact: str = ""  # se añade al User-Agent para que el proveedor pueda contactarnos
+
+    # Las imágenes de TCGdex pertenecen a The Pokémon Company y no hay permiso verificado:
+    # cambiar a "permitted" solo con autorización escrita.
+    tcgdex_image_license_status: str = "unknown"
+    image_allowed_hosts: str = "assets.tcgdex.net"
+    image_max_bytes: int = 3_000_000
+    image_min_side: int = 200
+    image_max_side: int = 4000
+
+    image_storage_backend: str = "local"  # local | s3
+    image_storage_path: str = "./datasets/images"
+    r2_account_id: str | None = None  # si se define y no hay s3_endpoint_url, se deriva el endpoint de R2
+    s3_endpoint_url: str | None = None  # R2: https://<account>.r2.cloudflarestorage.com
+    s3_bucket: str | None = None
+    s3_region: str = "auto"
+    s3_access_key_id: SecretStr | None = None
+    s3_secret_access_key: SecretStr | None = None
+
     @property
     def service_keys(self) -> list[str]:
+        if self.service_api_keys is None:
+            return []
         return [k.strip() for k in self.service_api_keys.get_secret_value().split(",") if k.strip()]
+
+    @property
+    def resolved_s3_endpoint(self) -> str | None:
+        if self.s3_endpoint_url:
+            return self.s3_endpoint_url
+        if self.r2_account_id:
+            return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+        return None
 
 
 @lru_cache

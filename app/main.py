@@ -9,6 +9,8 @@ from app.services.scan_service import ScanService
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    if settings.secret_key is None or not settings.service_keys:
+        raise RuntimeError("Faltan VISION_SECRET_KEY y/o VISION_SERVICE_API_KEYS")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     docs = settings.environment == "development"
     app = FastAPI(
