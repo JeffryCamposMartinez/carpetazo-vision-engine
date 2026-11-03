@@ -126,7 +126,7 @@ class Dataset:
         record = {
             "card_ref": ref, "pilot_slot": None, "name": None, "set_name": None, "collector_number": None, "language": "unknown",
             "finish": "desconocido", "categories": ["otra"], "pattern": "desconocido", "variant_group": None, "similar_to": None,
-            "difficulty_note": None, "tcgdex_card_id": None, "card_id": None, "printing_id": None, "variant_id": None,
+            "difficulty_note": None, "tcgdex_card_id": None, "catalog_category_id": None, "catalog_product_id": None, "card_id": None, "printing_id": None, "variant_id": None,
             "reference_object_key": None, "reference_sha256": None, "reference_verified_by": None, "reference_verified_at": None,
             "reference_verification_note": None, "condition_notes": None,
             "verification_status": "unverified", "verified_by": None, "verified_at": None, "verification_note": None,

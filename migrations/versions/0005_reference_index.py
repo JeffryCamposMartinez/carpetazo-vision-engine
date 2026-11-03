@@ -11,7 +11,9 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 
-from app.recognition.index.registry import MODELS, TIERS
+# Congelado a propósito: esta migración no cambia si el registro crece después (eso lo hacen migraciones nuevas).
+SLOTS = (("dinov2_small_ed25f3a_p1", 768), ("grid_g1", 456))
+TIERS = ("verified", "candidate")
 
 revision = "0005"
 down_revision = "0004"
@@ -72,24 +74,24 @@ def upgrade() -> None:
         sa.Column("import_run_id", uuid, sa.ForeignKey("reference_import_runs.id")),
         sa.CheckConstraint("proposal_status in ('probable','ambiguous')", name="ck_cref_status"),
     )
-    for slot in MODELS.values():
+    for slot_name, dim in SLOTS:
         for tier in TIERS:
-            name = slot.table(tier)
+            name = f"{tier}_embeddings_{slot_name}"
             parent = "verified_references" if tier == "verified" else "candidate_references"
             op.create_table(
                 name,
                 sa.Column("id", uuid, primary_key=True),
                 sa.Column("reference_id", uuid, sa.ForeignKey(f"{parent}.id", ondelete="CASCADE"), nullable=False),
                 sa.Column("normalization", sa.String(30), nullable=False),
-                sa.Column("embedding", Vector(slot.dim), nullable=False),
+                sa.Column("embedding", Vector(dim), nullable=False),
                 sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
                 sa.UniqueConstraint("reference_id", "normalization", name=f"uq_{name}"),
             )
 
 
 def downgrade() -> None:
-    for slot in MODELS.values():
+    for slot_name, _dim in SLOTS:
         for tier in TIERS:
-            op.drop_table(slot.table(tier))
+            op.drop_table(f"{tier}_embeddings_{slot_name}")
     for table in ("candidate_references", "verified_references", "reference_import_runs"):
         op.drop_table(table)

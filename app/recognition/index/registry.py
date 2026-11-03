@@ -10,7 +10,7 @@ from app.recognition.embedding.base import EmbeddingSpec
 from app.recognition.embedding.dinov2_client import DINOV2_SPEC
 from app.recognition.embedding.grid import GRID_SPEC
 
-TIERS = ("verified", "candidate")
+TIERS = ("verified", "candidate", "ambiguous")  # verificada | candidata (vínculo de Carpetazo sin revisar) | ambigua
 
 
 @dataclass(frozen=True)

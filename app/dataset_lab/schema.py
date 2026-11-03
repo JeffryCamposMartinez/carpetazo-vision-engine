@@ -93,6 +93,12 @@ def validate_card(c: dict) -> list[str]:
         errors.append("reference_verified_by sin reference_object_key")
     if not _LANG.match(str(c.get("language", ""))):
         errors.append(f"language={c.get('language')!r} inválido (use 'unknown' o un código como 'en')")
+    cat, prod = c.get("catalog_category_id"), c.get("catalog_product_id")
+    for name, v in (("catalog_category_id", cat), ("catalog_product_id", prod)):
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v <= 0):
+            errors.append(f"{name} debe ser null o un entero positivo de Carpetazo")
+    if (cat is None) != (prod is None):
+        errors.append("catalog_category_id y catalog_product_id van juntos (o ninguno)")
     for field in IDENTITY_FIELDS:
         if c.get(field) is not None and not is_uuid(c[field]):
             errors.append(f"{field} debe ser null o un UUID del catálogo (no se inventan ids)")

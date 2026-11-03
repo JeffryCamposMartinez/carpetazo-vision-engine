@@ -29,8 +29,8 @@ Abre los CSV con Excel (UTF-8 con BOM) y guárdalos como **CSV UTF-8**, con la f
 | `notas_estado` | opcional | Funda, rayones, dobleces |
 | `carta_verificada_por`, `nota_verificacion` | **van juntas**, opcionales | Tu nombre y qué comprobaste (lista de abajo). Si no estás seguro, déjalas vacías: la carta queda sin verificar |
 | `clave_referencia_r2`, `referencia_verificada_por`, `nota_referencia` | **van juntas**, opcionales; exigen carta verificada | Clave completa del objeto de R2 que **comparaste con la carta física**, quién y qué comparaste. Sin esto la carta no entra en la galería de evaluación |
-| `id_tcgdex` | opcional | Solo si lo confirmaste |
-| `card_id`, `printing_id`, `variant_id` | **déjalos vacíos** | Solo un UUID del catálogo ya confirmado por una persona; cualquier otra cosa se rechaza. Vacío = `null` |
+| `categoria_id_carpetazo`, `product_id_carpetazo` | **van juntas**; opcionales, pero necesarias para que la referencia entre al índice como verificada | El `categoryId` (3 = Pokémon inglés, 100 = Pokémon español) y el `productId` del catálogo de **Carpetazo.cl** de esa carta (enteros positivos). Si no lo sabes, déjalas vacías: nada se inventa. Debe coincidir con el número de la carta; el producto debe existir en el espejo del catálogo |
+| `card_id`, `printing_id`, `variant_id` | **déjalos vacíos** | Campos heredados (UUID del catálogo antiguo de Vision Engine). El catálogo de verdad es el de Carpetazo: se usan las dos columnas de arriba |
 | `sin_carta_motivo` | solo para carencias | Ver abajo |
 
 ## Valores permitidos (escríbelos exactamente así, en minúsculas y sin tildes)

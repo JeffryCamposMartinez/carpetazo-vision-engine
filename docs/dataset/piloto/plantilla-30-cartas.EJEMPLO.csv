@@ -1,4 +1,4 @@
-﻿slot,categoria_sugerida,nombre,set,numero,idioma,acabado,categorias,patron,grupo_variante,similar_a,motivo_dificultad,notas_estado,carta_verificada_por,nota_verificacion,clave_referencia_r2,referencia_verificada_por,nota_referencia,id_tcgdex,card_id,printing_id,variant_id,sin_carta_motivo
-1,comun,EJEMPLO Carta ficticia A,EJEMPLO Set,001/100,es,normal,comun,ninguno,,,,,EJEMPLO,"EJEMPLO: dato ficticio, no es una carta real",,,,,,,,
-26,similar_dificil,EJEMPLO Carta ficticia B,EJEMPLO Set,002/100,es,holo,holo;similar_dificil,ninguno,,EJEMPLO Carta ficticia A,EJEMPLO: arte casi igual a la otra carta,,EJEMPLO,EJEMPLO: dato ficticio,,,,,,,,
-12,reverse_holo,,,,,,,,,,,,,,,,,,,,,EJEMPLO: no tengo ninguna reverse holo para fotografiar
+﻿slot,categoria_sugerida,nombre,set,numero,idioma,acabado,categorias,patron,grupo_variante,similar_a,motivo_dificultad,notas_estado,carta_verificada_por,nota_verificacion,clave_referencia_r2,referencia_verificada_por,nota_referencia,categoria_id_carpetazo,product_id_carpetazo,card_id,printing_id,variant_id,sin_carta_motivo
+1,comun,EJEMPLO Carta ficticia A,EJEMPLO Set,001/100,es,normal,comun,ninguno,,,,,EJEMPLO,"EJEMPLO: dato ficticio, no es una carta real",,,,,,,,,
+26,similar_dificil,EJEMPLO Carta ficticia B,EJEMPLO Set,002/100,es,holo,holo;similar_dificil,ninguno,,EJEMPLO Carta ficticia A,EJEMPLO: arte casi igual a la otra carta,,EJEMPLO,EJEMPLO: dato ficticio,,,,,,,,,
+12,reverse_holo,,,,,,,,,,,,,,,,,,,,,,EJEMPLO: no tengo ninguna reverse holo para fotografiar

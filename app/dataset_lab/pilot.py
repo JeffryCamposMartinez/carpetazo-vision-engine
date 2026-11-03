@@ -28,7 +28,7 @@ SUGGESTED = {**{i: "comun" for i in range(1, 6)}, **{i: "holo" for i in range(6,
 CARD_CSV_COLUMNS = [
     "slot", "categoria_sugerida", "nombre", "set", "numero", "idioma", "acabado", "categorias", "patron", "grupo_variante",
     "similar_a", "motivo_dificultad", "notas_estado", "carta_verificada_por", "nota_verificacion", "clave_referencia_r2",
-    "referencia_verificada_por", "nota_referencia", "id_tcgdex", "card_id", "printing_id", "variant_id", "sin_carta_motivo",
+    "referencia_verificada_por", "nota_referencia", "categoria_id_carpetazo", "product_id_carpetazo", "card_id", "printing_id", "variant_id", "sin_carta_motivo",
 ]  # fmt: skip
 SESSION_CSV_COLUMNS = ["session_id", "ronda", "fecha", "telefono", "lugar", "operador", "notas"]
 
@@ -63,6 +63,14 @@ def declare_gap(ds: Dataset, category: str, reason: str, by: str, slot: int | No
     return gap
 
 
+def _pos_int(value: str) -> int | None:
+    if not value:
+        return None
+    if not value.isdigit() or int(value) <= 0:
+        raise DatasetError(f"{value!r} no es un entero positivo (id de Carpetazo)")
+    return int(value)
+
+
 def _split_list(value: str) -> list[str]:
     return [x.strip() for x in value.replace(",", ";").split(";") if x.strip()]
 
@@ -88,6 +96,8 @@ def _check_row(g, slot: int | None, target: int) -> None:
         raise DatasetError("nota_verificacion sin carta_verificada_por")
     if g("clave_referencia_r2") and not g("carta_verificada_por"):
         raise DatasetError("La referencia solo se verifica en cartas ya verificadas (rellena carta_verificada_por)")
+    if bool(g("categoria_id_carpetazo")) != bool(g("product_id_carpetazo")):
+        raise DatasetError("categoria_id_carpetazo y product_id_carpetazo van juntos (o ninguno)")
 
 
 def import_cards_csv(ds: Dataset, path: Path, by: str, dry_run: bool = False) -> dict:
@@ -128,7 +138,7 @@ def import_cards_csv(ds: Dataset, path: Path, by: str, dry_run: bool = False) ->
                 pilot_slot=slot, name=g("nombre"), set_name=g("set"), collector_number=g("numero"), language=g("idioma") or "unknown",
                 finish=g("acabado") or "desconocido", categories=_split_list(g("categorias")) or None, pattern=g("patron") or None,
                 variant_group=g("grupo_variante") or None, similar_to=g("similar_a") or None, difficulty_note=g("motivo_dificultad") or None,
-                condition_notes=g("notas_estado") or None, tcgdex_card_id=g("id_tcgdex") or None, card_id=g("card_id") or None,
+                condition_notes=g("notas_estado") or None, catalog_category_id=_pos_int(g("categoria_id_carpetazo")), catalog_product_id=_pos_int(g("product_id_carpetazo")), card_id=g("card_id") or None,
                 printing_id=g("printing_id") or None, variant_id=g("variant_id") or None, reference_object_key=g("clave_referencia_r2") or None,
             )  # fmt: skip
             key = Dataset.identity_key({**fields, "set_name": fields["set_name"], "pattern": fields["pattern"] or "desconocido"})

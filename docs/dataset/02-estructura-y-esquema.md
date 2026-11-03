@@ -32,7 +32,8 @@ Los **originales** se copian una vez, se marcan de solo lectura y se verifican c
 | `variant_group` | texto o `null` | Agrupa la carta base y sus patrones del mismo número |
 | `similar_to`, `difficulty_note` | texto o `null` | Para `similar_dificil`: con qué se confunde y por qué (la nota es obligatoria) |
 | `tcgdex_card_id` | texto o `null` | Id de TCGdex si una persona lo confirmó |
-| **`card_id`, `printing_id`, `variant_id`** | **UUID del catálogo o `null`** | **Desconocido = `null`. Nunca se rellenan por suposición** |
+| **`catalog_category_id`, `catalog_product_id`** | **enteros de Carpetazo o `null` (van juntos)** | Identidad de la impresión: `categoryId` y `productId` del catálogo de Carpetazo.cl. Desconocido = `null`. Nunca se rellenan por suposición |
+| `card_id`, `printing_id`, `variant_id` | UUID o `null` (heredados, sin uso) | El catálogo propio de Vision Engine ya no es la fuente de identidad |
 | `reference_object_key` | texto o `null` | Objeto de R2 que una persona comparó con la carta física y aceptó como referencia |
 | `reference_verified_by`, `reference_verified_at`, `reference_verification_note` | texto o `null` | **Verificación manual de la referencia digital** (quién, cuándo y qué se comparó). Sin ella la carta no entra en la galería de evaluación |
 | `reference_sha256` | texto o `null` | Se completa con `references-fetch` |

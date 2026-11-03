@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.database.guard import DatabaseNotAllowed, assert_lab_database  # noqa: F401  (re-exportados)
-from app.database.reference_models import EMBEDDING_TABLES, CandidateReference, VerifiedReference
+from app.database.reference_models import EMBEDDING_TABLES, AmbiguousReference, CandidateReference, VerifiedReference
 from app.dataset_lab.store import Dataset
 from app.recognition.index.registry import MODELS
 from app.recognition.index.store import import_verified_from_dataset
@@ -50,7 +50,7 @@ def cmd_import_verified(a) -> int:
 def cmd_stats(a) -> int:
     assert_lab_database(a.database_url)
     with Session(create_engine(a.database_url)) as s:
-        out = {"verified_references": s.scalar(select(func.count()).select_from(VerifiedReference)), "candidate_references": s.scalar(select(func.count()).select_from(CandidateReference)), "embeddings": {}}
+        out = {"verified_references": s.scalar(select(func.count()).select_from(VerifiedReference)), "candidate_references": s.scalar(select(func.count()).select_from(CandidateReference)), "ambiguous_references": s.scalar(select(func.count()).select_from(AmbiguousReference)), "embeddings": {}}
         for (tier, key), table in EMBEDDING_TABLES.items():
             out["embeddings"][f"{tier}:{key}"] = {"dim": MODELS[key].dim, "rows": s.scalar(select(func.count()).select_from(table))}
     print(json.dumps(out, ensure_ascii=False, indent=1))

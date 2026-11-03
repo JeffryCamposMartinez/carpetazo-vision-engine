@@ -53,6 +53,8 @@ def cmd_card_add(ds: Dataset, a) -> int:
             difficulty_note=a.difficulty_note,
             pilot_slot=a.slot,
             tcgdex_card_id=a.tcgdex_id,
+            catalog_category_id=a.catalog_category_id,
+            catalog_product_id=a.catalog_product_id,
             card_id=a.card_id,
             printing_id=a.printing_id,
             variant_id=a.variant_id,
@@ -386,6 +388,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--similar-to", help="carta registrada o texto con la que se confunde")
     s.add_argument("--difficulty-note", help="por qué es difícil (obligatoria para similar_dificil)")
     s.add_argument("--slot", type=int, help="posición 1-30 de la plantilla")
+    s.add_argument("--catalog-category-id", type=int, help="categoryId de Carpetazo (3 = Pokémon inglés, 100 = español)")
+    s.add_argument("--catalog-product-id", type=int, help="productId de Carpetazo (identidad de la impresión)")
     for opt in ("tcgdex-id", "card-id", "printing-id", "variant-id", "reference-object-key", "condition-notes"):
         s.add_argument(f"--{opt}")
     s = add("card-verify", cmd_card_verify)

@@ -520,3 +520,33 @@ def test_verified_card_without_verified_reference_is_excluded_from_the_evaluatio
     d = run_evaluation(ds, "p", {"grid": GridExtractor()}, allow_fictitious=True)["dataset"]
     assert d["gallery_cards"] == 2 and d["test_photos"] == 4 and d["calibration_photos"] == 4
     assert d["excluded_photos_without_verified_reference"] == 4  # ni conocida ni desconocida: fuera
+
+
+# ---- vínculo con el catálogo de Carpetazo (categoria_id_carpetazo / product_id_carpetazo)
+def test_carpetazo_product_link_is_optional_but_always_complete_and_positive(ds, tmp_path):
+    full_size_plan(ds)
+    ok = write_csv(tmp_path / "ok.csv", [good_row(1, categoria_id_carpetazo="3", product_id_carpetazo="5001"), good_row(2)])
+    res = import_cards_csv(ds, ok, "t")
+    assert not res["errors"]
+    by_slot = {c["pilot_slot"]: c for c in ds.cards.values()}
+    assert (by_slot[1]["catalog_category_id"], by_slot[1]["catalog_product_id"]) == (3, 5001) and by_slot[2]["catalog_category_id"] is None and by_slot[2]["catalog_product_id"] is None
+    for bad in ({"categoria_id_carpetazo": "3"}, {"product_id_carpetazo": "5001"}, {"categoria_id_carpetazo": "x", "product_id_carpetazo": "5"}, {"categoria_id_carpetazo": "3", "product_id_carpetazo": "0"}, {"categoria_id_carpetazo": "-3", "product_id_carpetazo": "5"}):
+        d = Dataset(tmp_path / f"d{abs(hash(str(bad)))}")
+        d.init()
+        atomic_write(d.root / "pilot.json", {"cards_target": 30, "photos_per_round": 5, "category_targets": {}, "declared_gaps": []})
+        res = import_cards_csv(d, write_csv(tmp_path / "bad.csv", [good_row(1, **bad)]), "t")
+        assert len(res["errors"]) == 1 and d.cards == {}, bad
+        assert import_cards_csv(d, tmp_path / "bad.csv", "t", dry_run=True)["errors"], bad
+
+
+def test_template_no_longer_asks_for_tcgdex_ids_and_asks_for_carpetazo_ids():
+    assert "id_tcgdex" not in CARD_CSV_COLUMNS and {"categoria_id_carpetazo", "product_id_carpetazo"} <= set(CARD_CSV_COLUMNS)
+
+
+def test_dataset_schema_rejects_half_or_invalid_catalog_links(ds):
+    base = dict(name="A", set_name="S", collector_number="1/1", language="es", finish="normal", categories=["comun"], pattern="ninguno")
+    for bad in ({"catalog_category_id": 3}, {"catalog_product_id": 5}, {"catalog_category_id": 3, "catalog_product_id": 0}, {"catalog_category_id": True, "catalog_product_id": 5}, {"catalog_category_id": 3, "catalog_product_id": "5"}):
+        with pytest.raises(DatasetError):
+            ds.add_card(**base, **bad)
+    c = ds.add_card(**base, catalog_category_id=3, catalog_product_id=5)
+    assert (c["catalog_category_id"], c["catalog_product_id"]) == (3, 5)
