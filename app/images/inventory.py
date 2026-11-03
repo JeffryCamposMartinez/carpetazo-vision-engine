@@ -11,7 +11,6 @@ DEFAULT_PREFIX = "Carpetazo.cl/Pokemon/Pokemon_DB/"
 CARD_IMAGES = "Pokemon_Images"
 DATA_DIR = "Pokemon_Data"
 
-_NUMBER_IN_PARENS = re.compile(r"^(?P<head>.*?)\s*\((?P<num>[^()]*)\)$")
 _ALT_NUMBER = re.compile(r"^(?P<name>.*) - (?P<alt>[A-Za-z0-9]+_[A-Za-z0-9]+)$")
 _LOCAL_TOTAL = re.compile(r"^(?P<local>[A-Za-z0-9]+)-(?P<total>[A-Za-z0-9]+)$")
 
@@ -36,36 +35,69 @@ def normalize_number(token: str, rules: NumberRules = NumberRules()) -> str:
 
 def normalize_name(name: str) -> str:
     """Conservador: Unicode NFKC, mayúsculas/minúsculas y espacios. No quita sufijos como EX, V o Alolan."""
-    return " ".join(unicodedata.normalize("NFKC", name).casefold().split())
+    text = unicodedata.normalize("NFKC", name).replace("’", "'").replace("‘", "'").replace("´", "'")
+    return " ".join(text.casefold().split())
+
+
+_NUM = r"#?[A-Za-z]{0,6}\d+[A-Za-z]?"
+_NUMBER_LIKE = re.compile(rf"^{_NUM}(?:-{_NUM})?$")
+_TRAIL_BRACKET = re.compile(r"\s*\[([^\]]*)\]$")
+_TRAIL_PAREN = re.compile(r"\s*\(([^()]*)\)$")
+_UNTERMINATED = re.compile(r"\s*[(\[]([^()\[\]]*)$")  # calificador truncado: 'Audino (Master Ball Patte'
+_SUFFIX_NUMBER = re.compile(rf"^(?P<name>.*?) - (?P<num>{_NUM})$")
 
 
 def parse_card_folder(folder: str) -> dict:
-    """'Aegislash EX - 65a_119 (065a-119)' -> nombre, número crudo y cómo se interpretó."""
-    m = _NUMBER_IN_PARENS.match(folder)
-    if not m:
-        return {
-            "name": folder.strip(),
-            "number_raw": None,
-            "local": None,
-            "total": None,
-            "interpretation": "sin_numero",
-        }
-    head, raw = m.group("head"), m.group("num").strip()
-    alt = _ALT_NUMBER.match(head)
-    name = alt.group("name") if alt else head
-    lt = _LOCAL_TOTAL.match(raw)
-    if lt:
-        local, total, how = lt.group("local"), lt.group("total"), "local-total (separado por '-')"
+    """'Aegislash EX - 65a_119 (065a-119)' -> nombre, número crudo, calificadores y cómo se interpretó.
+
+    Los paréntesis finales que no parecen un número (Prerelease, Master Ball Pattern, [Staff]) son
+    calificadores de variante, no parte del nombre ni del número.
+    """
+    s, quals, raw, alts = folder.strip(), [], None, []
+    while True:
+        if m := _TRAIL_BRACKET.search(s):
+            quals.insert(0, m.group(1).strip())
+        elif m := _TRAIL_PAREN.search(s):
+            tok = m.group(1).strip()
+            if _NUMBER_LIKE.match(tok):
+                if raw is None:
+                    raw = tok
+                else:
+                    alts.append(tok)
+            else:
+                quals.insert(0, tok)
+        elif m := _UNTERMINATED.search(s):
+            quals.insert(0, m.group(1).strip())
+        else:
+            break
+        s = s[: m.start()]
+
+    how = "token único"
+    if raw is not None:
+        alt = _ALT_NUMBER.match(s)
+        name = alt.group("name") if alt else s
+        alt_in_name = alt.group("alt") if alt else None
+        lt = _LOCAL_TOTAL.match(raw)
+        local, total = (lt.group("local"), lt.group("total")) if lt else (raw, None)
+        if lt:
+            how = "local-total (separado por '-')"
+    elif alt := _ALT_NUMBER.match(s):
+        name, alt_in_name = alt.group("name"), alt.group("alt")
+        local, _, total = alt_in_name.partition("_")
+        raw, how = alt_in_name, "'a_b' del nombre como a/b"
+    elif suf := _SUFFIX_NUMBER.match(s):
+        name, alt_in_name, local, total = suf.group("name"), None, suf.group("num"), None
+        raw, how = suf.group("num"), "sufijo ' - número' en el nombre"
     else:
-        local, total, how = raw or None, None, "token único"
+        return {
+            "name": s.strip(), "number_raw": None, "local": None, "total": None, "interpretation": "sin_numero",
+            "alt_number_in_name": None, "qualifiers": quals,
+        }  # fmt: skip
     return {
-        "name": name.strip(),
-        "number_raw": raw or None,
-        "local": local,
-        "total": total,
-        "interpretation": how,
-        "alt_number_in_name": alt.group("alt") if alt else None,
-    }
+        "name": name.strip(), "number_raw": raw, "local": local.lstrip("#") if local else None,
+        "total": total, "interpretation": how, "alt_number_in_name": alt_in_name or (alts[0] if alts else None),
+        "qualifiers": quals,
+    }  # fmt: skip
 
 
 @dataclass

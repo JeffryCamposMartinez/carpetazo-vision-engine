@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Alias de sets R2 -> TCGdex (v2) y asociaciones por objeto",
+  "description": "Los campos reviewed_by y reviewed_at los rellena una persona; el código nunca lo hace. Solo cuentan las entradas con status=confirmed y relation=same_set para resolver carpetas enteras.",
+  "$defs": {
+    "alias": {
+      "type": "object",
+      "required": ["r2_folder", "tcgdex_set_id", "relation", "status", "evidence", "conflicts", "reviewed_by", "reviewed_at"],
+      "properties": {
+        "r2_folder": { "type": "string", "description": "Nombre exacto de la carpeta de set en R2" },
+        "tcgdex_set_id": { "type": ["string", "null"] },
+        "relation": {
+          "enum": ["same_set", "printing_variant", "per_card"],
+          "description": "same_set: la carpeta es ese set. printing_variant: edición/variante de impresión de ese set (p. ej. Shadowless), se asocia a impresiones de variante. per_card: la carpeta mezcla sets, se resuelve por objeto."
+        },
+        "status": { "enum": ["proposed", "confirmed", "rejected"] },
+        "evidence": { "type": "object" },
+        "conflicts": { "type": "array", "items": { "type": "string" } },
+        "reviewed_by": { "type": ["string", "null"] },
+        "reviewed_at": { "type": ["string", "null"], "format": "date" }
+      }
+    },
+    "object_mapping": {
+      "type": "object",
+      "required": ["object_key", "tcgdex_card_id", "status", "evidence", "reviewed_by", "reviewed_at"],
+      "properties": {
+        "object_key": { "type": "string", "description": "Key completa del objeto en R2" },
+        "tcgdex_card_id": { "type": "string", "description": "Id de carta de TCGdex, p. ej. base1-58" },
+        "variant": { "type": ["object", "null"], "description": "Subtipo de variante de TCGdex cuando aplica: {type, subtype, stamp}" },
+        "status": { "enum": ["proposed", "confirmed", "rejected"] },
+        "evidence": { "type": "object" },
+        "reviewed_by": { "type": ["string", "null"] },
+        "reviewed_at": { "type": ["string", "null"], "format": "date" }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "aliases": { "type": "array", "items": { "$ref": "#/$defs/alias" } },
+    "objects": { "type": "array", "items": { "$ref": "#/$defs/object_mapping" } }
+  }
+}

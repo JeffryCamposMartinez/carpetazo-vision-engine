@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app.catalog.providers.tcgdex import ProviderError, TcgdexClient
 from app.core.config import get_settings
 from app.database.session import get_engine
+from app.images.alias_audit import audit_alias, write_audit
 from app.images.aliases import load_aliases
 from app.images.apply import apply_manifest, file_sha256, revert_associations
 from app.images.inventory import (
@@ -20,6 +21,7 @@ from app.images.inventory import (
     build_inventory,
     inventory_to_dict,
     load_data_jsons,
+    parse_card_folder,
 )
 from app.images.matching import match_inventory, read_manifest_csv, summarize, write_manifest
 from app.images.set_review import review_sets, write_review
@@ -70,6 +72,14 @@ def cmd_catalog_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_catalog_variant_probe(args: argparse.Namespace) -> int:
+    client = TcgdexClient(get_settings())
+    probe = {"language": args.language, "cards": [client.card_variants(c, args.language) for c in args.card]}
+    _write_json(Path(args.out), probe)
+    print(f"Variantes consultadas: {len(probe['cards'])} cartas -> {args.out}")
+    return 0
+
+
 def _load_aliases() -> dict[str, str]:
     aliases, warnings = load_aliases(ALIASES)
     for w in warnings:
@@ -80,6 +90,9 @@ def _load_aliases() -> dict[str, str]:
 def _resolve(args):
     inv = _load_json(Path(args.inventory))
     rows = [InventoryRow(**r) for r in inv["rows"]]
+    for r in rows:
+        if r.kind == "card":  # el parseo se deriva de la carpeta: así se aplica siempre la versión vigente
+            r.parsed = parse_card_folder(r.card_folder)
     snap = _load_json(Path(args.snapshot))
     folders = Counter(r.set_folder for r in rows if r.kind == "card")
     res = resolve_sets(dict(folders), snap["sets"], _load_aliases())
@@ -107,6 +120,25 @@ def cmd_images_sets_review(args: argparse.Namespace) -> int:
     review = review_sets(rows, snap["sets"], unresolved, data_json, claimed=claimed)
     paths = write_review(review, Path(args.out_dir))
     print(json.dumps(review["summary"], indent=1, ensure_ascii=False))
+    print("Escrito:", ", ".join(str(p) for p in paths))
+    return 0
+
+
+def cmd_images_alias_audit(args: argparse.Namespace) -> int:
+    _, rows, snap, res = _resolve(args)
+    raw = _load_json(Path(args.data_json_cache)) if Path(args.data_json_cache).exists() else {}
+    data_json = {tuple(k.split("")): v for k, v in raw.items()}
+    unresolved = [f for f, r in res.items() if r.status == "unresolved"]
+    claimed: dict[str, list[str]] = {}
+    for folder, r in res.items():
+        if r.set_id:
+            claimed.setdefault(r.set_id, []).append(folder)
+    review = review_sets(rows, snap["sets"], unresolved, data_json, claimed=claimed)
+    probe_path = Path(args.variant_probe)
+    probe = _load_json(probe_path) if probe_path.exists() else None
+    audit = audit_alias(rows, snap["sets"], res, review, probe)
+    paths = write_audit(audit, Path(args.out_dir))
+    print(json.dumps(audit["summary"], indent=1, ensure_ascii=False))
     print("Escrito:", ", ".join(str(p) for p in paths))
     return 0
 
@@ -192,10 +224,22 @@ def build_parser() -> argparse.ArgumentParser:
             p.add_argument("--out-dir", default=str(REPORTS))
             p.add_argument("--data-json-cache", default=str(REPORTS / "r2-datajson.json"))
 
+    p = add("catalog-variant-probe", cmd_catalog_variant_probe, "Consulta las variantes de impresión de unas cartas")
+    p.add_argument("--card", action="append", required=True)
+    p.add_argument("--language", default="en")
+    p.add_argument("--out", default=str(REPORTS / "tcgdex-variant-probe.json"))
+
     p = add("images-sets-review", cmd_images_sets_review, "Revisión humana de carpetas de set sin resolver")
     p.add_argument("--inventory", default=str(REPORTS / "r2-inventory.json"))
     p.add_argument("--snapshot", default=str(REPORTS / "tcgdex-en-snapshot.json"))
     p.add_argument("--data-json-cache", default=str(REPORTS / "r2-datajson.json"))
+    p.add_argument("--out-dir", default=str(REPORTS))
+
+    p = add("images-alias-audit", cmd_images_alias_audit, "Auditoría de las propuestas de alias (no confirma nada)")
+    p.add_argument("--inventory", default=str(REPORTS / "r2-inventory.json"))
+    p.add_argument("--snapshot", default=str(REPORTS / "tcgdex-en-snapshot.json"))
+    p.add_argument("--data-json-cache", default=str(REPORTS / "r2-datajson.json"))
+    p.add_argument("--variant-probe", default=str(REPORTS / "tcgdex-variant-probe.json"))
     p.add_argument("--out-dir", default=str(REPORTS))
 
     p = add("images-apply", cmd_images_apply, "Aplica un manifiesto CSV aprobado (columna approved=yes)")

@@ -56,7 +56,7 @@ def run(objs, aliases=None, data_json=None, cat=None):
 def test_parse_card_folder_variants():
     assert parse_card_folder("Pikachu (58-102)") | {} == {
         "name": "Pikachu", "number_raw": "58-102", "local": "58", "total": "102",
-        "interpretation": "local-total (separado por '-')", "alt_number_in_name": None,
+        "interpretation": "local-total (separado por '-')", "alt_number_in_name": None, "qualifiers": [],
     }  # fmt: skip
     p = parse_card_folder("Aegislash EX - 65a_119 (065a-119)")
     assert (p["name"], p["local"], p["total"], p["alt_number_in_name"]) == ("Aegislash EX", "065a", "119", "65a_119")
@@ -253,3 +253,20 @@ def test_tcgdex_gives_up_and_rejects_non_json():
         make_client(lambda req: httpx.Response(200, text="<html>")).snapshot("ja")
     with pytest.raises(ProviderError, match="404"):
         make_client(lambda req: httpx.Response(404)).snapshot("xx")
+
+
+def test_parser_separates_variant_qualifiers_and_suffix_numbers():
+    p = parse_card_folder("Alomomola (Master Ball Pattern) (024-086)")
+    assert (p["name"], p["local"], p["qualifiers"]) == ("Alomomola", "024", ["Master Ball Pattern"])
+    p = parse_card_folder("Aegislash - 060 (Prerelease) [Staff]")
+    assert (p["name"], p["local"], p["qualifiers"]) == ("Aegislash", "060", ["Prerelease", "Staff"])
+    assert parse_card_folder("Aipom - SM244")["local"] == "SM244"
+    assert parse_card_folder("Aegislash - 86_146 (Prerelease)")["total"] == "146"
+    assert parse_card_folder("Audino - 074_086 (Master Ball Patte (074-086)")["qualifiers"] == ["Master Ball Patte"]
+    assert parse_card_folder("Audino (#12) (12-30)")["local"] == "12"
+
+
+def test_variant_images_do_not_steal_the_base_card():
+    m, _ = run([obj("Base Set", "Pikachu (58-102)"), obj("Base Set", "Pikachu (Prerelease) (58-102)")])
+    assert m[0].status == "matched" and m[1].status == "ambiguous"
+    assert "variante 'Prerelease'" in m[1].reason

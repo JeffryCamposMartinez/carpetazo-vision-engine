@@ -14,7 +14,7 @@ STATUSES = ("matched", "probable", "ambiguous", "unmatched", "excluded")
 CSV_FIELDS = [
     "object_key", "status", "method", "reason", "set_folder", "set_id", "set_resolution", "catalog_card_id",
     "candidate_printing_id", "collector_number", "language", "extracted_name", "number_raw", "number_interpretation",
-    "etag", "size", "evidence", "confidence", "approved", "approved_by",
+    "qualifiers", "etag", "size", "evidence", "confidence", "approved", "approved_by",
 ]  # fmt: skip
 
 
@@ -34,6 +34,7 @@ class ManifestRow:
     extracted_name: str = ""
     number_raw: str = ""
     number_interpretation: str = ""
+    qualifiers: str = ""  # Prerelease, Master Ball Pattern, [Staff]...: variantes de la misma carta
     etag: str = ""
     size: int = 0
     evidence: dict = field(default_factory=dict)
@@ -114,6 +115,7 @@ def match_inventory(
             object_key=r.object_key, status="unmatched", set_folder=r.set_folder or "", etag=r.etag or "", size=r.size,
             extracted_name=r.parsed.get("name", ""), number_raw=r.parsed.get("number_raw") or "",
             number_interpretation=r.parsed.get("interpretation", ""),
+            qualifiers=" | ".join(r.parsed.get("qualifiers", [])),
         )  # fmt: skip
         if r.kind == "excluded":
             base.status, base.reason = "excluded", r.exclusion_reason or ""
@@ -168,13 +170,20 @@ def match_inventory(
 
 
 def _flag_duplicate_targets(rows: list[ManifestRow]) -> None:
+    """Varios objetos hacia la misma carta: la imagen base conserva su estado; el resto queda ambiguo."""
     claims = defaultdict(list)
     for m in rows:
         if m.catalog_card_id and m.status in {"matched", "probable"}:
             claims[m.catalog_card_id].append(m)
     for card_id, group in claims.items():
-        if len(group) > 1:
-            for m in group:
+        if len(group) < 2:
+            continue
+        base = [m for m in group if not m.qualifiers]
+        for m in group:
+            if m.qualifiers and len(base) == 1:
+                m.status = "ambiguous"
+                m.reason = f"variante '{m.qualifiers}' de {card_id}: necesita una impresión de variante en el catálogo"
+            elif m.qualifiers or len(base) > 1:
                 m.status, m.reason = "ambiguous", f"{len(group)} objetos de R2 apuntan a {card_id}"
 
 

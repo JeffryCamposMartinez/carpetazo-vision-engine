@@ -62,6 +62,17 @@ class TcgdexClient:
             self._sleep(min(2**attempt, 10))
         raise AssertionError("inalcanzable")
 
+    def card_variants(self, card_id: str, language: str = "en") -> dict:
+        """Solo las variantes de impresión de una carta (sin precios)."""
+        d = self._get(f"/{language}/cards/{card_id}")
+        keep = ("type", "subtype", "stamp", "size")
+        return {
+            "id": d["id"],
+            "name": d.get("name"),
+            "variants": d.get("variants") or {},
+            "variants_detailed": [{k: v[k] for k in keep if k in v} for v in d.get("variants_detailed") or []],
+        }
+
     def snapshot(self, language: str, progress: Callable[[str], None] = lambda _: None) -> dict:
         """Sets y cartas (id, número local, nombre) de un idioma. Una petición por set."""
         sets = []
@@ -76,6 +87,7 @@ class TcgdexClient:
                     "code": (d.get("abbreviation") or {}).get("official") or d.get("tcgOnline"),
                     "release_date": d.get("releaseDate"),
                     "series": (d.get("serie") or {}).get("name"),
+                    "card_count": d.get("cardCount") or {},
                     "cards": [
                         {"id": c["id"], "local_id": c["localId"], "name": c.get("name", "")} for c in d.get("cards", [])
                     ],
