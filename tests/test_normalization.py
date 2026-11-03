@@ -214,7 +214,8 @@ def test_dataset_comparison_is_read_only_and_guards_the_test_round(tmp_path):
         run_normalization_comparison(ds, "p", g.embed, "test")
     assert run_normalization_comparison(ds, "p", g.embed, "test", confirm_test=True)["evaluated_on"] == "test"
     photos = ds.photos
-    next(iter(photos.values()))["_ficticio"] = True
+    for p in photos.values():  # todas: el orden de las fotos es aleatorio y la comparación solo mira la ronda pedida
+        p["_ficticio"] = True
     ds.save_photos(photos)
     with pytest.raises(DatasetError, match="FICTICIOS"):
         run_normalization_comparison(ds, "p", g.embed, "calibration")
