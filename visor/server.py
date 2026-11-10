@@ -32,7 +32,7 @@ import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse, Response  # noqa: E402
 
-from app.recognition.detection import CardDetector  # noqa: E402
+from app.recognition.detection import CardDetector, _side_lengths, order_quad  # noqa: E402
 from app.recognition.embedding.base import CANON_H, CANON_W  # noqa: E402
 from app.recognition.embedding.dinov2_client import Dinov2WorkerExtractor  # noqa: E402
 from app.recognition.embedding.grid import GridExtractor  # noqa: E402
@@ -362,6 +362,56 @@ def search(vec: np.ndarray, k: int = 5):
     return [(int(i), float(sims[i])) for i in order]
 
 
+STRAIGHT_MAX_H = 1600  # alto máximo de la foto enderezada
+
+
+STRAIGHT_MAX_H = 1600  # alto máximo de la foto enderezada
+
+
+def visual_certainty(vec: np.ndarray) -> dict:
+    """Qué tan inequívoca es la coincidencia solo por imagen: similitud de la mejor y margen sobre la mejor carta de OTRO nombre."""
+    sims = REF_SPEC["mat"] @ vec
+    if GMASK["m"] is not None:
+        sims = np.where(GMASK["m"], sims, -1.0)
+    order = np.argsort(-sims)[:40]
+    top = int(order[0])
+    alt = next((float(sims[j]) for j in order if NAME_OF[int(j)] != NAME_OF[top]), float(sims[top]) - 0.2)
+    return {"sim": round(float(sims[top]), 4), "margin": round(float(sims[top]) - alt, 4), "pid": int(REF_SPEC["pid"][top]), "cat": int(REF_SPEC["cat"][top])}
+
+
+@app.post("/straighten")
+async def straighten(request: Request):
+    """Endereza y centra la carta de una foto (perspectiva corregida, a la resolución de la foto). Devuelve JPEG en base64 o found=false."""
+    if not authorized(request):
+        return JSONResponse({"error": "no autorizado"}, status_code=401)
+    if int(request.headers.get("content-length") or 0) > MAX_BODY:
+        return JSONResponse({"error": "imagen demasiado grande"}, status_code=413)
+    data = await request.body()
+    if len(data) > MAX_BODY:
+        return JSONResponse({"error": "imagen demasiado grande"}, status_code=413)
+    arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if arr is None or arr.shape[0] * arr.shape[1] > MAX_PIXELS:
+        return JSONResponse({"error": "imagen no válida"}, status_code=400)
+    d = det.detect(arr)
+    # solo si el cuadrilátero es claramente la carta entera (proporción 63×88, grande, sin cortar por el borde); si no, se deja la foto original
+    m = d.metrics
+    if not d.found or m.touches_image_border or m.area_fraction < 0.45 or not 0.67 <= m.aspect_ratio <= 0.76 or m.rectangularity < 0.8 or m.perspective_skew > 0.35:
+        return {"found": False}
+    q = order_quad(d.quad)
+    top, right, bottom, left = _side_lengths(q)
+    if (top + bottom) / 2 > (left + right) / 2:  # carta tumbada: girar el orden de vértices 90°
+        q = np.roll(q, -1, axis=0)
+        top, right, bottom, left = _side_lengths(q)
+    h = int(min(STRAIGHT_MAX_H, max(left, right)))
+    w = int(round(h * CANON_W / CANON_H))
+    dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], np.float32)
+    card = cv2.warpPerspective(arr, cv2.getPerspectiveTransform(q.astype(np.float32), dst), (w, h), flags=cv2.INTER_CUBIC)
+    ok, jpg = cv2.imencode(".jpg", card, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok:
+        return {"found": False}
+    return {"found": True, "width": w, "height": h, "image": base64.b64encode(jpg.tobytes()).decode()}
+
+
 @app.post("/scan")
 async def scan(request: Request):
     t0 = time.perf_counter()
@@ -410,6 +460,22 @@ async def scan(request: Request):
     tm["detectar"] = time.perf_counter() - mark; mark = time.perf_counter()
     if not cands:
         return {"found": False, "ms": round((time.perf_counter() - t0) * 1000)}
+    # el OCR (nombre y texto del cuerpo) no depende del embedding: arranca a la vez y se solapan
+    piece_ocr = piece if (piece is not None and piece.size) else arr
+    names_box, body_box, readers = {"r": ([], [], [], [])}, {}, []
+
+    def _names():
+        try:
+            names_box["r"] = ocr_hits(piece_ocr)
+        except Exception as exc:  # noqa: BLE001
+            print("ocr nombre fallo:", exc, flush=True)
+
+    readers.append(threading.Thread(target=_names, daemon=True))
+    gm0, cat0 = GMASK["m"], REF_SPEC["cat"]
+    if gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS))):  # hay Pokémon en juego: el texto del cuerpo (idioma y número)
+        readers.append(threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True))
+    for th in readers:
+        th.start()
     best, n_emb = None, 0
     with lock:
         for label, img in cands:
@@ -426,16 +492,9 @@ async def scan(request: Request):
         # texto de la carta (nombre / numero) para re-ordenar: la mayoria de los fallos son cartas con plantilla parecida
         ocr_info = {"name": [], "lines": [], "boost": 0, "language": {"code": None, "conf": 0.0, "source": "none"}}
         try:
-            piece_ocr = piece if (piece is not None and piece.size) else arr
-            gm0, cat0 = GMASK["m"], REF_SPEC["cat"]
-            body_box = {}
-            reader = None
-            if gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS))):  # hay Pokémon en juego: el texto del cuerpo (idioma y número) se lee en paralelo con el nombre
-                reader = threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True)
-                reader.start()
-            name_idx, num_idx, lines, found = ocr_hits(piece_ocr)
-            if reader is not None:
-                reader.join()
+            for th in readers:
+                th.join()
+            name_idx, num_idx, lines, found = names_box["r"]
             ocr_info.update(name=found, lines=lines[:4])
             gm = GMASK["m"]
             vis_full = REF_SPEC["mat"] @ best["vec"]
