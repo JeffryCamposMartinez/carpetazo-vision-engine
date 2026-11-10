@@ -214,9 +214,15 @@ def ocr_hits(piece: np.ndarray):
                 continue
             if k in NAME_IDX:
                 name_idx += NAME_IDX[k][:300]; names_found.append(k)
-            elif len(k) >= 6:
-                for m in difflib.get_close_matches(k, [x for x in NAME_BUCKET.get(k[0], []) if abs(len(x) - len(k)) <= 3], n=2, cutoff=0.86):
-                    name_idx += NAME_IDX[m][:300]; names_found.append(m + "~")
+            else:
+                # el OCR a veces antepone o deja basura junto al nombre («I Energia del Team Rocket»): se prueban ventanas de palabras, las más largas primero
+                toks = k.split()
+                hit = next((w for size in range(min(len(toks), 6), 0, -1) for i in range(len(toks) - size + 1) if len(w := " ".join(toks[i:i + size])) >= 6 and w in NAME_IDX), None)
+                if hit:
+                    name_idx += NAME_IDX[hit][:300]; names_found.append(hit)
+                elif len(k) >= 6:
+                    for m in difflib.get_close_matches(k, [x for x in NAME_BUCKET.get(k[0], []) if abs(len(x) - len(k)) <= 3], n=2, cutoff=0.86):
+                        name_idx += NAME_IDX[m][:300]; names_found.append(m + "~")
         for ln in ls:
             for m in NUMRE.finditer(ln.upper()):
                 nk = nnum(m.group(0))
@@ -397,11 +403,15 @@ async def scan(request: Request):
                 if lang_info["code"]:
                     prune = np.isin(cat_arr, PK_CATS) & (cat_arr != PK_LANG_CAT[lang_info["code"]])  # fuera las versiones de Pokémon en los otros idiomas
                     gm_new = ~prune if gm is None else (gm & ~prune)
-                    # solo se restringe si en ese idioma hay algo que se le parezca (si no, se deja todo)
-                    if float(np.where(gm_new, vis_full, -1.0).max()) >= 0.55:
+                    # Solo se restringe si en ese idioma hay una carta que se le parezca tanto como la mejor de todos los idiomas. Si no
+                    # (p. ej. una carta en español que solo tiene entrada en inglés), se deja todo: el idioma queda anotado y quien llama
+                    # usa la ficha inglesa de la edición con el idioma de la carta (en español, la imagen solo si ya existe en español).
+                    best_lang = float(np.where(gm_new, vis_full, -1.0).max())
+                    best_all = float(vis_full.max() if gm is None else np.where(gm, vis_full, -1.0).max())
+                    if best_lang >= 0.55 and best_lang >= best_all - 0.08:
                         gm = gm_new; GMASK["m"] = gm_new
                     else:
-                        lang_info["code"] = None; lang_info["source"] = "sin_candidatas"
+                        lang_info["source"] = "sin_entrada_en_ese_idioma"
             ocr_info["language"] = {k: lang_info[k] for k in ("code", "conf", "source")}
             if gm is not None:
                 name_idx = [i for i in name_idx if gm[i]]; num_idx = [i for i in num_idx if gm[i]]
