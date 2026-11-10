@@ -46,8 +46,8 @@ def to_canon(bgr: np.ndarray) -> np.ndarray:
     return cv2.resize(bgr, (CANON_W, CANON_H), interpolation=cv2.INTER_AREA)
 
 
-IDX = Path(os.environ.get("VISOR_INDEX_DIR", "visor/data/indice"))
-CATDB = os.environ.get("VISOR_CATALOG_DB", "visor/data/catalogo.sqlite")
+IDX = Path(os.environ.get("VISOR_INDEX_DIR", "visor/datos/indice"))
+CATDB = os.environ.get("VISOR_CATALOG_DB", "visor/datos/catalogo.sqlite")
 LANG = {3: "Pokémon EN", 100: "Pokémon ES", 85: "Pokémon JP", 1: "Magic", 2: "Yu-Gi-Oh", 63: "Digimon", 68: "One Piece", 71: "Lorcana", 89: "Riftbound", 99: "Mitos y Leyendas"}
 STATE = {"n_chunks": -1, "t": 0.0}
 

@@ -14,24 +14,25 @@ Visor web para el celular: apuntas la cámara a una carta, se detecta sola y se 
 | `umbrales.example.json` | Umbrales ajustables en vivo (copiar a `data/umbrales.json`) |
 
 ## Cómo se usa
-1. Sincronizar el catálogo al espejo local (SQLite):
-   ```powershell
-   python -X utf8 -m app.catalog_mirror.cli sync --categories 3 100 85 1 2 63 68 71 89 99 --database-url sqlite:///visor/data/catalogo.sqlite
-   ```
-   (Antes hay que crear las tablas con `Base.metadata.create_all`, ver `docs/catalog-mirror.md`.)
-2. Crear el índice (reanudable; unas 15 imágenes por segundo en una GTX 960):
-   ```powershell
-   python -X utf8 visor/build_index.py visor/data/catalogo.sqlite visor/data/indice
-   ```
-3. Generar un certificado de prueba (la cámara del celular exige HTTPS) y arrancar:
+Los datos ya vienen en el repositorio (en `visor/datos/`, con Git LFS): un catálogo reducido (`catalogo.sqlite`: ediciones y cartas de los 9 juegos/idiomas, con nombre, número, rareza y URL de imagen) y el índice de embeddings (`indice/chunk_*.npz`). No hay claves ni credenciales.
+
+1. Clonar con LFS (`git lfs install` una vez) y preparar el entorno del proyecto (ver `README.md` de la raíz). El modelo DINOv2 corre en un entorno aparte, ver `docs/recognition/`.
+2. Generar un certificado de prueba (la cámara del celular exige HTTPS) y arrancar desde la raíz:
    ```powershell
    openssl req -x509 -newkey rsa:2048 -nodes -keyout visor/data/key.pem -out visor/data/cert.pem -days 30 -subj "/CN=visor" -addext "subjectAltName=IP:<IP-de-tu-PC>"
-   $env:VISOR_CATALOG_DB="visor/data/catalogo.sqlite"; $env:VISOR_INDEX_DIR="visor/data/indice"
    python -X utf8 visor/server.py visor/data/cert.pem visor/data/key.pem 8443
    ```
-4. Abrir `https://<IP-de-tu-PC>:8443` en el celular (misma Wi-Fi), aceptar el aviso del certificado y dar permiso a la cámara.
+   (`visor/data/` y los `.pem` están fuera de git.)
+3. Abrir `https://<IP-de-tu-PC>:8443` en el celular (misma Wi-Fi), aceptar el aviso del certificado y dar permiso a la cámara.
 
-Variables: `VISOR_CATALOG_DB`, `VISOR_INDEX_DIR`, `VISOR_DATA_DIR` (telemetría, escaneos y `umbrales.json`; por defecto `visor/data/`, ignorado por git).
+### Regenerar o ampliar los datos
+```powershell
+python -X utf8 -m app.catalog_mirror.cli sync --categories 3 100 85 1 2 63 68 71 89 99 --database-url sqlite:///visor/data/espejo.sqlite   # ~16 min por 940 ediciones
+python -X utf8 visor/build_index.py visor/data/espejo.sqlite visor/datos/indice   # reanudable; ~15 imágenes/s en una GTX 960
+```
+(Las tablas del espejo se crean con `Base.metadata.create_all`, ver `docs/catalog-mirror.md`; `build_index.py` omite lo ya indexado.)
+
+Variables: `VISOR_CATALOG_DB`, `VISOR_INDEX_DIR` (por defecto `visor/datos/...`) y `VISOR_DATA_DIR` (telemetría, escaneos y `umbrales.json`; por defecto `visor/data/`).
 
 ## Cómo reconoce
 1. Página: espera a que la carta esté quieta, enfocada y con luz usable, y manda el recorte del marco.
