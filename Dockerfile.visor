@@ -1,0 +1,31 @@
+# Motor del visor (reconocimiento de cartas por foto) para el servidor, en CPU. Lo llama el backend de Carpetazo con X-Service-Key.
+# El Dockerfile de la raíz es la API v1 (sin reconocimiento); este es el que usa Coolify para el escáner.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    HF_HOME=/opt/hf-home \
+    VISOR_MODE=service VISOR_PORT=8001 VISOR_DEVICE=cpu \
+    VISOR_ML_PYTHON=/usr/local/bin/python VISOR_HF_HOME=/opt/hf-home \
+    VISOR_DATA_HOME=/data/datos VISOR_INDEX_DIR=/data/datos/indice VISOR_CATALOG_DB=/data/datos/catalogo.sqlite VISOR_DATA_DIR=/data/runtime
+
+# OCR del nombre y número de la carta (Tesseract, inglés y español)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --create-home --uid 10001 vision && mkdir -p /srv /data /opt/hf-home && chown -R vision /srv /data /opt/hf-home
+WORKDIR /srv
+
+COPY requirements-visor.txt .
+RUN pip install --no-cache-dir -r requirements-visor.txt
+COPY visor/fetch_model.py visor/fetch_model.py
+RUN python visor/fetch_model.py && chown -R vision /opt/hf-home
+
+COPY app ./app
+COPY visor/server.py visor/index.html visor/fetch_data.py visor/datos.manifest.json ./visor/
+USER vision
+
+EXPOSE 8001
+# La primera vez baja ~360 MB de datos al volumen /data (monta un volumen persistente ahí)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=900s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=4)"
+CMD ["sh", "-c", "python visor/fetch_data.py && exec python visor/server.py"]

@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.pytest_cache
+.ruff_cache
+datasets
+evaluation
+models
+tests
+docs
+scripts
+**/__pycache__
+visor/datos

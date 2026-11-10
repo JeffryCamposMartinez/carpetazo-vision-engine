@@ -6,9 +6,14 @@
 Uso (desde la raíz del repositorio):
     python visor/server.py <cert.pem> <key.pem> [puerto]
 Variables: VISOR_CATALOG_DB (SQLite del espejo), VISOR_INDEX_DIR (trozos del índice), VISOR_DATA_DIR (telemetría y umbrales).
+
+MODO SERVICIO (VISOR_MODE=service, para el servidor): HTTP sin certificado (lo pone el proxy), sin página ni telemetría, y /scan y /status
+exigen la cabecera X-Service-Key con una de VISOR_SERVICE_KEYS (separadas por coma). Lo llama el backend de Carpetazo, nunca el navegador.
+Otras variables: VISOR_PORT, VISOR_ML_PYTHON y VISOR_HF_HOME (entorno ML), VISOR_DEVICE (auto|cpu|cuda).
 """
 import base64
 import difflib
+import hmac
 import re
 import subprocess
 import unicodedata
@@ -32,11 +37,15 @@ from app.recognition.embedding.dinov2_client import Dinov2WorkerExtractor  # noq
 from app.recognition.embedding.grid import GridExtractor  # noqa: E402
 from app.recognition.embedding.service import EmbeddingService  # noqa: E402
 
-CERT, KEY = sys.argv[1], sys.argv[2]
-PORT = int(sys.argv[3]) if len(sys.argv) > 3 else 8443
+CERT, KEY = (sys.argv[1], sys.argv[2]) if len(sys.argv) > 2 else (None, None)
+PORT = int(os.environ.get("VISOR_PORT") or (sys.argv[3] if len(sys.argv) > 3 else 8443))
+SERVICE_MODE = os.environ.get("VISOR_MODE", "dev") == "service"
+SERVICE_KEYS = [k.strip() for k in os.environ.get("VISOR_SERVICE_KEYS", "").split(",") if k.strip()]
+MAX_BODY = 4_000_000  # bytes de la imagen
+MAX_PIXELS = 16_000_000
 CARD_RATIO = 63 / 88
 
-svc = EmbeddingService(Dinov2WorkerExtractor(), GridExtractor(), 30.0)
+svc = EmbeddingService(Dinov2WorkerExtractor(python=os.environ.get("VISOR_ML_PYTHON") or None, hf_home=os.environ.get("VISOR_HF_HOME") or None, device=os.environ.get("VISOR_DEVICE", "auto")), GridExtractor(), 30.0)
 det = CardDetector()
 lock = threading.Lock()
 REF_SPEC = {"key": None}
@@ -132,7 +141,20 @@ class Ocr:
                 return []
 
 
-OCR = Ocr()
+class OcrTesseract:
+    """OCR en Linux con Tesseract (paquetes del sistema tesseract-ocr, eng y spa)."""
+
+    LANGS = {"en-US": "eng", "es-ES": "spa"}
+
+    def read(self, path: str, lang: str) -> list[str]:
+        try:
+            r = subprocess.run(["tesseract", path, "stdout", "-l", self.LANGS.get(lang, "eng"), "--psm", "6"], capture_output=True, text=True, timeout=10, check=False)  # noqa: S603,S607
+            return [x.strip() for x in r.stdout.splitlines() if x.strip()]
+        except Exception:  # noqa: BLE001
+            return []
+
+
+OCR = Ocr() if os.name == "nt" else OcrTesseract()
 NUMRE = re.compile(r"\b(\d{1,3}\s*/\s*[0-9A-Z]{2,5})\b|\b([A-Z0-9]{2,6}-[A-Z]{0,3}\d{2,4})\b")
 
 
@@ -188,13 +210,30 @@ DATA.mkdir(parents=True, exist_ok=True)
 DEFAULT_CFG = {"movMax": 14, "sharpMin": 12, "stillFrames": 2, "sdMin": 14, "meanMin": 25, "meanMax": 245, "glareMax": 0.18, "torchAuto": False, "exposureAuto": True, "votes": 3, "minScore": 0.55, "noCardGapMs": 1200, "window": 5, "scanGapMs": 250}
 
 
+def authorized(request: Request) -> bool:
+    """En modo servicio solo pasa quien manda una clave de servicio válida (comparación en tiempo constante)."""
+    if not SERVICE_MODE:
+        return True
+    sent = request.headers.get("x-service-key", "")
+    return bool(sent) and any(hmac.compare_digest(sent, k) for k in SERVICE_KEYS)
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
+    if SERVICE_MODE:
+        return HTMLResponse("", status_code=404)
     return (HERE / "index.html").read_text(encoding="utf-8")
 
 
 @app.get("/config")
 def config():
+    if SERVICE_MODE:
+        return JSONResponse({}, status_code=404)
     try:
         return {**DEFAULT_CFG, **_json.loads((DATA / "umbrales.json").read_text(encoding="utf-8"))}
     except Exception:  # noqa: BLE001
@@ -203,6 +242,8 @@ def config():
 
 @app.post("/telemetry")
 async def telemetry(request: Request):
+    if SERVICE_MODE:
+        return JSONResponse({}, status_code=404)
     body = (await request.body())[:20000].decode("utf-8", "ignore")
     with open(DATA / "telemetria.jsonl", "a", encoding="utf-8") as f:
         f.write(body.replace(chr(10), " ") + chr(10))
@@ -210,7 +251,9 @@ async def telemetry(request: Request):
 
 
 @app.get("/status")
-def status():
+def status(request: Request):
+    if not authorized(request):
+        return JSONResponse({"error": "no autorizado"}, status_code=401)
     load_index()
     return {"cartas_indexadas": int(len(REF_SPEC["pid"])) if "pid" in REF_SPEC else 0, "spec": REF_SPEC.get("key"), "embedding": svc.status()}
 
@@ -243,19 +286,32 @@ def search(vec: np.ndarray, k: int = 5):
 @app.post("/scan")
 async def scan(request: Request):
     t0 = time.perf_counter()
+    if not authorized(request):
+        return JSONResponse({"error": "no autorizado"}, status_code=401)
+    if int(request.headers.get("content-length") or 0) > MAX_BODY:
+        return JSONResponse({"error": "imagen demasiado grande"}, status_code=413)
     if time.time() - STATE["t"] > 60:
         STATE["t"] = time.time()
         load_index()
     if "mat" not in REF_SPEC:
         return JSONResponse({"error": "el indice aun no tiene cartas"}, status_code=503)
-    games = [int(x) for x in request.headers.get("x-games", "").split(",") if x.strip().isdigit()]
+    games = [int(x) for x in request.headers.get("x-games", "").split(",") if x.strip().isdigit() and int(x) in LANG]
     GMASK["m"] = np.isin(REF_SPEC["cat"], games) if games else None
     data = await request.body()
-    crop = [float(x) for x in request.headers.get("x-crop", "").split(",") if x]
+    if len(data) > MAX_BODY:
+        return JSONResponse({"error": "imagen demasiado grande"}, status_code=413)
+    try:
+        crop = [float(x) for x in request.headers.get("x-crop", "").split(",") if x]
+    except ValueError:
+        return JSONResponse({"error": "recorte no válido"}, status_code=400)
+    if crop and (len(crop) != 4 or any(not 0.0 <= v <= 1.0 for v in crop) or crop[2] <= 0 or crop[3] <= 0):
+        return JSONResponse({"error": "recorte no válido"}, status_code=400)
     arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if arr is None:
         return JSONResponse({"error": "imagen no válida"}, status_code=400)
     H, W = arr.shape[:2]
+    if H * W > MAX_PIXELS:
+        return JSONResponse({"error": "imagen demasiado grande"}, status_code=413)
     piece = None
     cands = []  # (etiqueta, imagen canónica)
     e1 = det.detect(arr)
@@ -307,6 +363,8 @@ async def scan(request: Request):
         except Exception as exc:  # noqa: BLE001
             print("ocr fallo:", exc, flush=True)
     try:
+        if SERVICE_MODE:
+            raise OSError  # en el servidor no se guarda registro de escaneos
         with open(DATA / "escaneos.jsonl", "a", encoding="utf-8") as lf:
             lf.write(_json.dumps({"t": int(time.time() * 1000), "src": best["label"], "e1": bool(e1.found), "e1c": round(float(e1.confidence), 3),
                                   "s1": round(best["top"][0][1], 4), "s2": round(best["top"][1][1], 4), "name": meta(int(REF_SPEC["cat"][best["top"][0][0]]), int(REF_SPEC["pid"][best["top"][0][0]]))["name"]}, ensure_ascii=False) + chr(10))
@@ -322,4 +380,4 @@ async def scan(request: Request):
 if __name__ == "__main__":
     load_index()
     STATE["t"] = time.time()
-    uvicorn.run(app, host="0.0.0.0", port=PORT, ssl_certfile=CERT, ssl_keyfile=KEY, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0", port=PORT, ssl_certfile=CERT, ssl_keyfile=KEY, log_level="warning")  # sin certificado (CERT=None) corre en HTTP

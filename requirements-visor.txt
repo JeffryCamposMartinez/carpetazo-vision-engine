@@ -1,0 +1,11 @@
+# Dependencias del motor del visor en el servidor (Dockerfile.visor): torch en CPU, sin GPU ni PostgreSQL.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+transformers==5.22.1
+huggingface_hub==2.4.0
+numpy==2.5.4
+opencv-python-headless>=4.10
+pillow>=13,<14
+pydantic-settings>=2.16,<3
+fastapi>=0.162,<1
+uvicorn[standard]>=0.54,<1
