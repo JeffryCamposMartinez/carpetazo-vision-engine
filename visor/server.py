@@ -145,7 +145,7 @@ class Ocr:
 class OcrTesseract:
     """OCR en Linux con Tesseract (paquetes del sistema tesseract-ocr, eng y spa)."""
 
-    LANGS = {"en-US": "eng", "es-ES": "spa"}
+    LANGS = {"en-US": "eng", "es-ES": "spa", "multi": "eng+spa"}
 
     def read(self, path: str, lang: str) -> list[str]:
         try:
@@ -156,6 +156,43 @@ class OcrTesseract:
 
 
 OCR = Ocr() if os.name == "nt" else OcrTesseract()
+
+# Idioma de una carta Pokémon (inglés, español o japonés). La ilustración es la misma en todos: el idioma se lee del texto del cuadro de ataques.
+# Palabras que distinguen un idioma del otro (se evitan las que existen en los dos, como «a» o «de»).
+PK_LANG_CAT = {"en": 3, "es": 100, "ja": 85}  # categoría del catálogo de cada idioma
+PK_CATS = [3, 100, 85]
+WORDS_EN = frozenset("the your opponent this attack damage during may if from into put each that their once flip heads tails active bench prize more than deck hand discard attached coin effect cards".split())
+WORDS_ES = frozenset("el la los las tu tus rival este esta ataque daño durante puedes si del con por cada esa sus una mazo mano descarta unido unidas moneda cruz cara activo banca premio más que como turno jugar cartas".split())
+WORD_RE = re.compile(r"[a-záéíóúñü']+")
+
+
+def ocr_text(path: str) -> str:
+    if isinstance(OCR, OcrTesseract):
+        return " ".join(OCR.read(path, "multi"))
+    return " ".join(OCR.read(path, "en-US") + OCR.read(path, "es-ES"))  # el OCR de Windows lee un idioma por pasada
+
+
+def detect_language(piece: np.ndarray, top_cat: int | None) -> dict:
+    """Devuelve {code: en|es|ja|None, conf, source, en, es}. Texto del cuadro de ataques; si no hay texto legible y la carta más parecida es japonesa, japonés."""
+    h, w = piece.shape[:2]
+    body = piece[int(h * 0.48): int(h * 0.96)]
+    big = body if w >= 800 else cv2.resize(body, (800, int(800 * body.shape[0] / max(w, 1))), interpolation=cv2.INTER_CUBIC)
+    path = str(DATA / "ocr_body.png")
+    cv2.imwrite(path, big)
+    text = ocr_text(path).lower()
+    words = WORD_RE.findall(text)
+    en = sum(1 for x in words if x in WORDS_EN)
+    # tildes y ñ cuentan como español, salvo «Pokémon» (aparece con tilde en todos los idiomas)
+    es = sum(1 for x in words if x in WORDS_ES) + sum(1 for x in words if len(x) > 2 and not x.startswith("pok") and re.search(r"[áéíóúñ]", x))
+    info = {"code": None, "conf": 0.0, "source": "none", "en": en, "es": es}
+    if en + es >= 3:
+        p_es = (es + 0.5) / (en + es + 1)
+        code, conf = ("es", p_es) if p_es >= 0.5 else ("en", 1 - p_es)
+        if conf >= 0.75:
+            info.update(code=code, conf=round(conf, 2), source="texto")
+    elif top_cat == 85:
+        info.update(code="ja", conf=0.6, source="visual")  # sin texto latino legible y la más parecida es la versión japonesa
+    return info
 NUMRE = re.compile(r"\b(\d{1,3}\s*/\s*[0-9A-Z]{2,5})\b|\b([A-Z0-9]{2,6}-[A-Z]{0,3}\d{2,4})\b")
 
 
@@ -193,10 +230,10 @@ def ocr_hits(piece: np.ndarray):
 def meta(cat: int, pid: int) -> dict:
     con = sqlite3.connect(f"file:{CATDB}?mode=ro", uri=True)
     try:
-        r = con.execute("select c.name,c.number,c.rarity,c.image_url,c.relation,s.name from mirror_cards c left join mirror_sets s on s.category_id=c.category_id and s.group_id=c.group_id where c.category_id=? and c.product_id=?", (cat, pid)).fetchone()
+        r = con.execute("select c.name,c.number,c.rarity,c.image_url,c.relation,s.name,c.group_id from mirror_cards c left join mirror_sets s on s.category_id=c.category_id and s.group_id=c.group_id where c.category_id=? and c.product_id=?", (cat, pid)).fetchone()
     finally:
         con.close()
-    return {"name": r[0], "number": r[1], "rarity": r[2], "image": r[3], "relation": r[4], "set": r[5], "lang": LANG.get(cat, str(cat)), "category_id": cat, "product_id": pid}
+    return {"name": r[0], "number": r[1], "rarity": r[2], "image": r[3], "relation": r[4], "set": r[5], "lang": LANG.get(cat, str(cat)), "category_id": cat, "product_id": pid, "group_id": r[6]}
 
 
 app = FastAPI()
@@ -346,17 +383,29 @@ async def scan(request: Request):
                 break
         tm["embedding+búsqueda"] = time.perf_counter() - mark; mark = time.perf_counter()
         # texto de la carta (nombre / numero) para re-ordenar: la mayoria de los fallos son cartas con plantilla parecida
-        ocr_info = {"name": [], "lines": [], "boost": 0}
+        ocr_info = {"name": [], "lines": [], "boost": 0, "language": {"code": None, "conf": 0.0, "source": "none"}}
         try:
             piece_ocr = piece if (piece is not None and piece.size) else arr
             name_idx, num_idx, lines, found = ocr_hits(piece_ocr)
             ocr_info.update(name=found, lines=lines[:4])
             gm = GMASK["m"]
+            vis_full = REF_SPEC["mat"] @ best["vec"]
+            cat_arr = REF_SPEC["cat"]
+            lang_info = {"code": None, "conf": 0.0, "source": "none"}
+            if gm is None or bool(np.any(gm & np.isin(cat_arr, PK_CATS))):  # la carpeta/juego incluye Pokémon: se detecta el idioma
+                lang_info = detect_language(piece_ocr, int(cat_arr[best["top"][0][0]]))
+                if lang_info["code"]:
+                    prune = np.isin(cat_arr, PK_CATS) & (cat_arr != PK_LANG_CAT[lang_info["code"]])  # fuera las versiones de Pokémon en los otros idiomas
+                    gm_new = ~prune if gm is None else (gm & ~prune)
+                    # solo se restringe si en ese idioma hay algo que se le parezca (si no, se deja todo)
+                    if float(np.where(gm_new, vis_full, -1.0).max()) >= 0.55:
+                        gm = gm_new; GMASK["m"] = gm_new
+                    else:
+                        lang_info["code"] = None; lang_info["source"] = "sin_candidatas"
+            ocr_info["language"] = {k: lang_info[k] for k in ("code", "conf", "source")}
             if gm is not None:
                 name_idx = [i for i in name_idx if gm[i]]; num_idx = [i for i in num_idx if gm[i]]
-            vis_all = REF_SPEC["mat"] @ best["vec"]
-            if gm is not None:
-                vis_all = np.where(gm, vis_all, -1.0)
+            vis_all = vis_full if gm is None else np.where(gm, vis_full, -1.0)
             pool = set(np.argsort(-vis_all)[:50].tolist()) | set(name_idx) | set(num_idx)
             ids = np.array(sorted(pool))
             sims = REF_SPEC["mat"][ids] @ best["vec"]
