@@ -21,6 +21,7 @@ import os
 import sqlite3
 import sys
 import threading
+import uuid
 import time
 from pathlib import Path
 
@@ -101,12 +102,14 @@ NAME_OF: list = []
 def build_meta() -> None:
     con = sqlite3.connect(f"file:{CATDB}?mode=ro", uri=True)
     try:
-        info = {(c, p): (n, nu) for c, p, n, nu in con.execute("select category_id, product_id, name, number from mirror_cards")}
+        info = {(c, p): (n, nu, (sn or "").startswith("Prize Pack")) for c, p, n, nu, sn in con.execute("select c.category_id, c.product_id, c.name, c.number, s.name from mirror_cards c left join mirror_sets s on s.category_id=c.category_id and s.group_id=c.group_id")}
     finally:
         con.close()
     NAME_IDX.clear(); NUM_IDX.clear(); NAME_BUCKET.clear(); NAME_OF.clear()
+    prize = []
     for i, (c, p) in enumerate(zip(REF_SPEC["cat"].tolist(), REF_SPEC["pid"].tolist())):
-        n, nu = info.get((c, p), ("", ""))
+        n, nu, is_prize = info.get((c, p), ("", "", False))
+        prize.append(is_prize)
         k = nname(n)
         NAME_OF.append(k)
         if len(k) >= 3:
@@ -116,6 +119,7 @@ def build_meta() -> None:
             NUM_IDX.setdefault(nk, []).append(i)
     for k in NAME_IDX:
         NAME_BUCKET.setdefault(k[0], []).append(k)
+    REF_SPEC["prize"] = np.array(prize, dtype=bool)
 
 
 class Ocr:
@@ -149,7 +153,7 @@ class OcrTesseract:
 
     def read(self, path: str, lang: str) -> list[str]:
         try:
-            r = subprocess.run(["tesseract", path, "stdout", "-l", self.LANGS.get(lang, "eng"), "--psm", "6"], capture_output=True, text=True, timeout=10, check=False)  # noqa: S603,S607
+            r = subprocess.run(["tesseract", path, "stdout", "-l", self.LANGS.get(lang, "eng"), "--psm", "6"], capture_output=True, text=True, timeout=10, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"})  # noqa: S603,S607
             return [x.strip() for x in r.stdout.splitlines() if x.strip()]
         except Exception:  # noqa: BLE001
             return []
@@ -166,20 +170,50 @@ WORDS_ES = frozenset("el la los las tu tus rival este esta ataque daño durante 
 WORD_RE = re.compile(r"[a-záéíóúñü']+")
 
 
+STAMP_PATH = Path(__file__).with_name("league_stamp.png")
+STAMP_TPL = cv2.imread(str(STAMP_PATH), cv2.IMREAD_GRAYSCALE) if STAMP_PATH.exists() else None
+STAMP_REL_W = 302 / 1629  # ancho del sello respecto del ancho de la carta en la foto de la plantilla
+STAMP_MIN = 0.6  # medido: 21 de 21 cartas de liga ≥ 0,67 y 0 falsos positivos en 48 cartas normales (máximo 0,49)
+
+
+def league_stamp(piece: np.ndarray) -> float:
+    """Puntaje (0–1) de que la carta lleva el sello de liga (Play! Pokémon); el sello puede estar en cualquier lado de la carta."""
+    if STAMP_TPL is None:
+        return 0.0
+    h, w = piece.shape[:2]
+    g = cv2.cvtColor(cv2.resize(piece, (600, max(1, int(h * 600 / w))), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+    band = g[int(g.shape[0] * 0.25): int(g.shape[0] * 0.97)]
+    best = 0.0
+    for f in (0.75, 0.85, 1.0, 1.15, 1.3):
+        tw = int(600 * STAMP_REL_W * f); th = int(tw * STAMP_TPL.shape[0] / STAMP_TPL.shape[1])
+        if th >= band.shape[0] or tw >= band.shape[1]:
+            continue
+        best = max(best, float(cv2.matchTemplate(band, cv2.resize(STAMP_TPL, (tw, th), interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED).max()))
+    return best
+
+
 def ocr_text(path: str) -> str:
     if isinstance(OCR, OcrTesseract):
         return " ".join(OCR.read(path, "multi"))
     return " ".join(OCR.read(path, "en-US") + OCR.read(path, "es-ES"))  # el OCR de Windows lee un idioma por pasada
 
 
-def detect_language(piece: np.ndarray, top_cat: int | None) -> dict:
-    """Devuelve {code: en|es|ja|None, conf, source, en, es}. Texto del cuadro de ataques; si no hay texto legible y la carta más parecida es japonesa, japonés."""
+def body_text(piece: np.ndarray) -> str:
+    """Texto de la mitad inferior de la carta (ataques y línea del número)."""
     h, w = piece.shape[:2]
     body = piece[int(h * 0.48): int(h * 0.96)]
     big = body if w >= 800 else cv2.resize(body, (800, int(800 * body.shape[0] / max(w, 1))), interpolation=cv2.INTER_CUBIC)
-    path = str(DATA / "ocr_body.png")
+    path = str(DATA / f"ocr_{uuid.uuid4().hex}.png")
     cv2.imwrite(path, big)
-    text = ocr_text(path).lower()
+    try:
+        return ocr_text(path)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def detect_language(text: str, top_cat: int | None) -> dict:
+    """Devuelve {code: en|es|ja|None, conf, source, en, es}. Texto del cuadro de ataques; si no hay texto legible y la carta más parecida es japonesa, japonés."""
+    text = text.lower()
     words = WORD_RE.findall(text)
     en = sum(1 for x in words if x in WORDS_EN)
     # tildes y ñ cuentan como español, salvo «Pokémon» (aparece con tilde en todos los idiomas)
@@ -202,10 +236,10 @@ def ocr_hits(piece: np.ndarray):
     piece = piece[: int(h * 0.30)]  # el nombre está en la franja superior de la carta
     h, w = piece.shape[:2]
     big = piece if w >= 700 else cv2.resize(piece, (700, int(700 * h / w)), interpolation=cv2.INTER_CUBIC)
-    path = str(DATA / "ocr_tmp.png")
+    path = str(DATA / f"ocr_{uuid.uuid4().hex}.png")
     cv2.imwrite(path, big)
     lines, name_idx, num_idx, names_found = [], [], [], []
-    for lang in ("en-US", "es-ES"):
+    for lang in (("multi",) if isinstance(OCR, OcrTesseract) else ("en-US", "es-ES")):  # Tesseract lee los dos idiomas en una pasada
         ls = OCR.read(path, lang)
         lines += ls
         for ln in ls[:8]:
@@ -230,6 +264,7 @@ def ocr_hits(piece: np.ndarray):
                     num_idx += NUM_IDX[nk][:300]
         if names_found:
             break
+    Path(path).unlink(missing_ok=True)
     return name_idx, num_idx, lines, names_found
 
 
@@ -392,16 +427,35 @@ async def scan(request: Request):
         ocr_info = {"name": [], "lines": [], "boost": 0, "language": {"code": None, "conf": 0.0, "source": "none"}}
         try:
             piece_ocr = piece if (piece is not None and piece.size) else arr
+            gm0, cat0 = GMASK["m"], REF_SPEC["cat"]
+            body_box = {}
+            reader = None
+            if gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS))):  # hay Pokémon en juego: el texto del cuerpo (idioma y número) se lee en paralelo con el nombre
+                reader = threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True)
+                reader.start()
             name_idx, num_idx, lines, found = ocr_hits(piece_ocr)
+            if reader is not None:
+                reader.join()
             ocr_info.update(name=found, lines=lines[:4])
             gm = GMASK["m"]
             vis_full = REF_SPEC["mat"] @ best["vec"]
             cat_arr = REF_SPEC["cat"]
             lang_info = {"code": None, "conf": 0.0, "source": "none"}
             if gm is None or bool(np.any(gm & np.isin(cat_arr, PK_CATS))):  # la carpeta/juego incluye Pokémon: se detecta el idioma
-                lang_info = detect_language(piece_ocr, int(cat_arr[best["top"][0][0]]))
+                body = body_box.get("text", "")
+                lang_info = detect_language(body, int(cat_arr[best["top"][0][0]]))
+                # el número impreso («182/182») que salió en ese texto también suma: distingue reimpresiones y versiones de liga
+                for m in NUMRE.finditer(body.upper()):
+                    nk = nnum(m.group(0))
+                    if nk in NUM_IDX:
+                        num_idx += NUM_IDX[nk][:300]
+                stamp = league_stamp(piece_ocr)
+                is_league = stamp >= STAMP_MIN
+                ocr_info["league"] = round(stamp, 2)
                 if lang_info["code"]:
                     prune = np.isin(cat_arr, PK_CATS) & (cat_arr != PK_LANG_CAT[lang_info["code"]])  # fuera las versiones de Pokémon en los otros idiomas
+                    if is_league:
+                        prune &= ~REF_SPEC["prize"]  # las cartas de liga existen sobre todo en la entrada inglesa: se dejan (la web usa su vista en español)
                     gm_new = ~prune if gm is None else (gm & ~prune)
                     # Solo se restringe si en ese idioma hay una carta que se le parezca tanto como la mejor de todos los idiomas. Si no
                     # (p. ej. una carta en español que solo tiene entrada en inglés), se deja todo: el idioma queda anotado y quien llama
@@ -421,7 +475,8 @@ async def scan(request: Request):
             sims = REF_SPEC["mat"][ids] @ best["vec"]
             nm, nu = set(name_idx), set(num_idx)
             ok_vis = sims >= 0.45  # un nombre leido solo suma si la carta tambien se parece visualmente
-            final = sims + ok_vis * (np.array([0.20 if i in nm else 0.0 for i in ids.tolist()]) + np.array([0.25 if i in nu else 0.0 for i in ids.tolist()]))
+            league_boost = (np.where(REF_SPEC["prize"][ids], 0.25, -0.05) if ocr_info.get("league", 0) >= STAMP_MIN else 0.0)  # con sello de liga: la versión de liga manda
+            final = sims + ok_vis * (np.array([0.20 if i in nm else 0.0 for i in ids.tolist()]) + np.array([0.25 if i in nu else 0.0 for i in ids.tolist()]) + league_boost)
             order = np.argsort(-final)[:5]
             best["top"] = [(int(ids[j]), float(final[j])) for j in order]
             ocr_info["boost"] = round(float(final[order[0]] - sims[order[0]]), 2)

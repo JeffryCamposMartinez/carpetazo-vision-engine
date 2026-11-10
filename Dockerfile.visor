@@ -21,7 +21,7 @@ COPY visor/fetch_model.py visor/fetch_model.py
 RUN python visor/fetch_model.py && chown -R vision /opt/hf-home
 
 COPY app ./app
-COPY visor/server.py visor/index.html visor/fetch_data.py visor/datos.manifest.json ./visor/
+COPY visor/server.py visor/index.html visor/fetch_data.py visor/datos.manifest.json visor/league_stamp.png ./visor/
 USER vision
 
 EXPOSE 8001
