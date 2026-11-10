@@ -475,7 +475,7 @@ async def scan(request: Request):
             sims = REF_SPEC["mat"][ids] @ best["vec"]
             nm, nu = set(name_idx), set(num_idx)
             ok_vis = sims >= 0.45  # un nombre leido solo suma si la carta tambien se parece visualmente
-            league_boost = (np.where(REF_SPEC["prize"][ids], 0.25, -0.05) if ocr_info.get("league", 0) >= STAMP_MIN else 0.0)  # con sello de liga: la versión de liga manda
+            league_boost = (np.where(REF_SPEC["prize"][ids], 0.25, -0.05) if ocr_info.get("league", 0) >= STAMP_MIN else 0.0) * (sims >= sims.max() - 0.10)  # con sello de liga: la versión de liga manda, pero solo entre cartas que ya se parecen a la mejor (el sello no identifica)
             final = sims + ok_vis * (np.array([0.20 if i in nm else 0.0 for i in ids.tolist()]) + np.array([0.25 if i in nu else 0.0 for i in ids.tolist()]) + league_boost)
             order = np.argsort(-final)[:5]
             best["top"] = [(int(ids[j]), float(final[j])) for j in order]
