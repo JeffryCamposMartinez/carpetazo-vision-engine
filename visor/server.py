@@ -362,6 +362,19 @@ async def scan(request: Request):
             ocr_info["margin"] = round(float(final[order[0]] - (alt[0] if alt else final[order[0]] - 0.2)), 3)
         except Exception as exc:  # noqa: BLE001
             print("ocr fallo:", exc, flush=True)
+    # otras impresiones de la misma carta (mismo nombre en el catálogo), las más parecidas primero
+    same = []
+    try:
+        shown = {t[0] for t in best["top"]}
+        key = NAME_OF[best["top"][0][0]]
+        pool = [i for i in NAME_IDX.get(key, []) if i not in shown and (GMASK["m"] is None or GMASK["m"][i])]
+        if pool:
+            sims = REF_SPEC["mat"][pool] @ best["vec"]
+            for j in np.argsort(-sims)[:20]:
+                i = pool[int(j)]
+                same.append({**meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i])), "score": round(float(sims[j]), 4)})
+    except Exception as exc:  # noqa: BLE001
+        print("misma carta fallo:", exc, flush=True)
     try:
         if SERVICE_MODE:
             raise OSError  # en el servidor no se guarda registro de escaneos
@@ -373,7 +386,7 @@ async def scan(request: Request):
     prev = cv2.imencode(".jpg", cv2.resize(best["img"], (110, 154)))[1].tobytes()
     return {"found": True, "source": best["label"], "e1": bool(e1.found), "e1_conf": round(float(e1.confidence), 3),
             "top": [{**meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i])), "score": round(s, 4), "group": NAME_OF[i] if i < len(NAME_OF) else ""} for i, s in best["top"]],
-            "indexed": int(len(REF_SPEC["pid"])), "ocr": ocr_info,
+            "same": same, "indexed": int(len(REF_SPEC["pid"])), "ocr": ocr_info,
             "preview": "data:image/jpeg;base64," + base64.b64encode(prev).decode(), "ms": round((time.perf_counter() - t0) * 1000)}
 
 
