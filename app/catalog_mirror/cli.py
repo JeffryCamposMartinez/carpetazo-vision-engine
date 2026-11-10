@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.catalog_mirror.client import DEFAULT_BASE_URL, CarpetazoCatalogClient
-from app.catalog_mirror.sync import POKEMON_CATEGORIES, SyncOptions, mirror_stats, plan, run_sync
+from app.catalog_mirror.sync import POKEMON_CATEGORIES, SUPPORTED_CATEGORIES, SyncOptions, mirror_stats, plan, run_sync
 from app.database.guard import DatabaseNotAllowed, assert_lab_database
 
 
@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     def common(s, sync=False):
         s.add_argument("--database-url", required=True)
         s.add_argument("--base-url", default=DEFAULT_BASE_URL)
-        s.add_argument("--categories", nargs="+", type=int, default=list(POKEMON_CATEGORIES), choices=list(POKEMON_CATEGORIES), help="alcance inicial: Pokémon 3 (inglés) y 100 (español)")
+        s.add_argument("--categories", nargs="+", type=int, default=list(POKEMON_CATEGORIES), choices=list(SUPPORTED_CATEGORIES), help="alcance: Pokémon 3 (EN), 100 (ES), 85 (JP) y Magic 1, Yu-Gi-Oh 2, Digimon 63, One Piece 68, Lorcana 71, Riftbound 89 y Mitos y Leyendas 99")
         s.add_argument("--min-interval", type=float, default=1.0, help="segundos mínimos entre peticiones (por defecto 1)")
         s.add_argument("--max-age-days", type=float, default=7.0)
         s.add_argument("--force", action="store_true", help="vuelve a descargar todas las ediciones")

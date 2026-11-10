@@ -32,7 +32,8 @@ from app.catalog_mirror.mapping import (
 from app.database.mirror_models import MirrorCard, MirrorChange, MirrorGame, MirrorSet, MirrorSyncRun
 
 log = logging.getLogger("vision.catalog_mirror")
-POKEMON_CATEGORIES = (3, 100)  # alcance inicial: Pokémon inglés y español
+POKEMON_CATEGORIES = (3, 100)  # alcance por defecto: Pokémon inglés y español
+SUPPORTED_CATEGORIES = (3, 100, 85, 1, 2, 63, 68, 71, 89, 99)  # + Pokémon JP (85), Magic (1), Yu-Gi-Oh (2), Digimon (63), One Piece (68), Lorcana (71), Riftbound (89), Mitos y Leyendas (99); se eligen con --categories
 SPANISH_VIRTUAL_GROUP_BASE = 9_000_000
 INCOMPLETE = ("running", "interrupted", "failed", "partial")
 

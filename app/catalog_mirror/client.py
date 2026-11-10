@@ -17,7 +17,20 @@ import httpx
 
 DEFAULT_BASE_URL = "https://api.carpetazo.cl/api"  # el que usa el frontend de Carpetazo
 USER_AGENT = "CarpetazoVisionEngine-catalog-mirror/0.1 (sincronizacion de solo lectura)"
-ALLOWED = (re.compile(r"^/tcg/catalog/sets$"), re.compile(r"^/tcg/catalog/\d{1,9}/\d{1,9}/cards$"))
+MYL_CATEGORY = 99
+
+
+def _myl_card(r: dict) -> dict:
+    """Normaliza un producto de Mitos y Leyendas a la forma de las demás cartas (extData -> extendedData, número y frecuencia)."""
+    ext = r.get("extData") if isinstance(r.get("extData"), list) else []
+    by = {i.get("name"): i.get("value") for i in ext if isinstance(i, dict)}
+    return {**r, "extendedData": ext, "number": by.get("Number"), "rarity": by.get("Frequency"), "game": "Mitos y Leyendas", "hasImage": bool(r.get("imageUrl"))}
+
+
+ALLOWED = (
+    re.compile(r"^/tcg/catalog/sets$"), re.compile(r"^/tcg/catalog/\d{1,9}/\d{1,9}/cards$"),
+    re.compile(r"^/tcg/99/groups$"), re.compile(r"^/tcg/99/\d{1,9}/products$"),  # Mitos y Leyendas (categoryId 99) tiene su propio catálogo público
+)
 MAX_RETRY_AFTER = 120.0
 
 
@@ -114,7 +127,11 @@ class CarpetazoCatalogClient:
         return [row for row in body["data"] if isinstance(row, dict)]
 
     def get_sets(self, category_id: int) -> list[dict]:
+        if int(category_id) == MYL_CATEGORY:
+            return self._get("/tcg/99/groups")
         return self._get("/tcg/catalog/sets", {"categoryId": int(category_id)})
 
     def get_cards(self, category_id: int, group_id: int) -> list[dict]:
+        if int(category_id) == MYL_CATEGORY:
+            return [_myl_card(r) for r in self._get(f"/tcg/99/{int(group_id)}/products")]
         return self._get(f"/tcg/catalog/{int(category_id)}/{int(group_id)}/cards")

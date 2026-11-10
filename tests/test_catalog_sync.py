@@ -109,7 +109,7 @@ def test_client_only_allows_the_two_read_only_catalog_endpoints_and_never_fetche
     for bad in ("/tcg/search", "/admin/catalog-import", "/images/1.webp", "/tcg/catalog/cards-data", "/tcg/catalog/3/10/cards/extra"):
         with pytest.raises(CatalogApiError, match="no permitida"):
             client._get(bad)
-    assert all(p.startswith("/api/tcg/catalog") for p in api.log) and client.requests_made == 2 and len(ALLOWED) == 2
+    assert all(p.startswith("/api/tcg/catalog") for p in api.log) and client.requests_made == 2 and len(ALLOWED) == 4
     with pytest.raises(ValueError, match="https"):
         CarpetazoCatalogClient("http://api.ejemplo.invalid/api")
 
