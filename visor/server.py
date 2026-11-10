@@ -43,9 +43,10 @@ SERVICE_MODE = os.environ.get("VISOR_MODE", "dev") == "service"
 SERVICE_KEYS = [k.strip() for k in os.environ.get("VISOR_SERVICE_KEYS", "").split(",") if k.strip()]
 MAX_BODY = 4_000_000  # bytes de la imagen
 MAX_PIXELS = 16_000_000
+EARLY_STOP = 0.75  # si una candidata ya llega a este parecido no se calculan las demás (cada embedding cuesta CPU)
 CARD_RATIO = 63 / 88
 
-svc = EmbeddingService(Dinov2WorkerExtractor(python=os.environ.get("VISOR_ML_PYTHON") or None, hf_home=os.environ.get("VISOR_HF_HOME") or None, device=os.environ.get("VISOR_DEVICE", "auto")), GridExtractor(), 30.0)
+svc = EmbeddingService(Dinov2WorkerExtractor(python=os.environ.get("VISOR_ML_PYTHON") or None, hf_home=os.environ.get("VISOR_HF_HOME") or None, device=os.environ.get("VISOR_DEVICE", "auto"), idle_seconds=float(os.environ.get("VISOR_IDLE_SECONDS", "0" if SERVICE_MODE else "120"))), GridExtractor(), 30.0)
 det = CardDetector()
 lock = threading.Lock()
 REF_SPEC = {"key": None}
@@ -306,9 +307,11 @@ async def scan(request: Request):
         return JSONResponse({"error": "recorte no válido"}, status_code=400)
     if crop and (len(crop) != 4 or any(not 0.0 <= v <= 1.0 for v in crop) or crop[2] <= 0 or crop[3] <= 0):
         return JSONResponse({"error": "recorte no válido"}, status_code=400)
+    tm, mark = {}, time.perf_counter()
     arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     if arr is None:
         return JSONResponse({"error": "imagen no válida"}, status_code=400)
+    tm["decodificar"] = time.perf_counter() - mark; mark = time.perf_counter()
     H, W = arr.shape[:2]
     if H * W > MAX_PIXELS:
         return JSONResponse({"error": "imagen demasiado grande"}, status_code=413)
@@ -317,16 +320,19 @@ async def scan(request: Request):
     e1 = det.detect(arr)
     if e1.found:
         rc = det.rectify(arr, e1)
-        cands += [("E1", rc.upright), ("E1 girada", rc.flipped)]
+        cands.append(("E1", rc.upright))
     if len(crop) == 4:
         x, y, w, h = crop
         x0, y0, x1, y1 = int(x * W), int(y * H), int((x + w) * W), int((y + h) * H)
         piece = arr[max(y0, 0):y1, max(x0, 0):x1]
         if piece.size:
             cands.append(("marco", to_canon(piece)))
+    if e1.found:
+        cands.append(("E1 girada", rc.flipped))  # solo se prueba si las otras no convencen (carta al revés)
+    tm["detectar"] = time.perf_counter() - mark; mark = time.perf_counter()
     if not cands:
         return {"found": False, "ms": round((time.perf_counter() - t0) * 1000)}
-    best = None
+    best, n_emb = None, 0
     with lock:
         for label, img in cands:
             res = svc.embed(norm_luz(img))
@@ -335,6 +341,10 @@ async def scan(request: Request):
             top = search(res.vector)
             if best is None or top[0][1] > best["top"][0][1]:
                 best = {"label": label, "top": top, "img": img, "vec": res.vector}
+            n_emb += 1
+            if best["top"][0][1] >= EARLY_STOP:
+                break
+        tm["embedding+búsqueda"] = time.perf_counter() - mark; mark = time.perf_counter()
         # texto de la carta (nombre / numero) para re-ordenar: la mayoria de los fallos son cartas con plantilla parecida
         ocr_info = {"name": [], "lines": [], "boost": 0}
         try:
@@ -362,6 +372,7 @@ async def scan(request: Request):
             ocr_info["margin"] = round(float(final[order[0]] - (alt[0] if alt else final[order[0]] - 0.2)), 3)
         except Exception as exc:  # noqa: BLE001
             print("ocr fallo:", exc, flush=True)
+    tm["ocr+reordenar"] = time.perf_counter() - mark; mark = time.perf_counter()
     # otras impresiones de la misma carta (mismo nombre en el catálogo), las más parecidas primero
     same = []
     try:
@@ -383,6 +394,9 @@ async def scan(request: Request):
                                   "s1": round(best["top"][0][1], 4), "s2": round(best["top"][1][1], 4), "name": meta(int(REF_SPEC["cat"][best["top"][0][0]]), int(REF_SPEC["pid"][best["top"][0][0]]))["name"]}, ensure_ascii=False) + chr(10))
     except Exception:  # noqa: BLE001
         pass
+    tm["otras ediciones+datos"] = time.perf_counter() - mark
+    if SERVICE_MODE:  # una línea por escaneo en el registro del contenedor: dónde se va el tiempo
+        print("scan " + f"total={(time.perf_counter() - t0) * 1000:.0f}ms bytes={len(data)} candidatas={n_emb} " + " ".join(f"{k.replace(' ', '_')}={v * 1000:.0f}ms" for k, v in tm.items()), flush=True)
     prev = cv2.imencode(".jpg", cv2.resize(best["img"], (110, 154)))[1].tobytes()
     return {"found": True, "source": best["label"], "e1": bool(e1.found), "e1_conf": round(float(e1.confidence), 3),
             "top": [{**meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i])), "score": round(s, 4), "group": NAME_OF[i] if i < len(NAME_OF) else ""} for i, s in best["top"]],
@@ -390,7 +404,20 @@ async def scan(request: Request):
             "preview": "data:image/jpeg;base64," + base64.b64encode(prev).decode(), "ms": round((time.perf_counter() - t0) * 1000)}
 
 
+def warm_up() -> None:
+    try:
+        noise = np.random.default_rng(0).integers(0, 255, (CANON_H, CANON_W, 3), dtype=np.uint8)
+        t = time.perf_counter()
+        with lock:
+            svc.embed(noise)
+        print(f"modelo listo en {time.perf_counter() - t:.1f} s", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print("calentamiento fallo:", exc, flush=True)
+
+
 if __name__ == "__main__":
     load_index()
     STATE["t"] = time.time()
+    if SERVICE_MODE:
+        threading.Thread(target=warm_up, daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=PORT, ssl_certfile=CERT, ssl_keyfile=KEY, log_level="warning")  # sin certificado (CERT=None) corre en HTTP
