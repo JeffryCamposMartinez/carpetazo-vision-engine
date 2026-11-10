@@ -9,3 +9,8 @@ models/*
 evaluation/data/
 evaluation/reports/
 !**/.gitkeep
+
+# visor (datos locales: índice, telemetría, certificados)
+visor/data/
+*.pem
+*.sqlite

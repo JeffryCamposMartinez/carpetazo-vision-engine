@@ -1,0 +1,7 @@
+{
+  "movMax": 30,
+  "sharpMin": 300,
+  "stillFrames": 1,
+  "minScore": 0.55,
+  "torchAuto": false
+}
