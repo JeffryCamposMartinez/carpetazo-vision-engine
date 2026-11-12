@@ -4,7 +4,7 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     HF_HOME=/opt/hf-home \
-    VISOR_MODE=service VISOR_PORT=8001 VISOR_DEVICE=cpu \
+    OMP_THREAD_LIMIT=1 \n    VISOR_MODE=service VISOR_PORT=8001 VISOR_DEVICE=cpu \
     VISOR_ML_PYTHON=/usr/local/bin/python VISOR_HF_HOME=/opt/hf-home \
     VISOR_DATA_HOME=/data/datos VISOR_INDEX_DIR=/data/datos/indice VISOR_CATALOG_DB=/data/datos/catalogo.sqlite VISOR_DATA_DIR=/data/runtime
 
