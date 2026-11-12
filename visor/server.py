@@ -44,6 +44,7 @@ SERVICE_MODE = os.environ.get("VISOR_MODE", "dev") == "service"
 SERVICE_KEYS = [k.strip() for k in os.environ.get("VISOR_SERVICE_KEYS", "").split(",") if k.strip()]
 MAX_BODY = 4_000_000  # bytes de la imagen
 MAX_PIXELS = 16_000_000
+FLIP_BELOW = 0.55  # la candidata girada (carta al revés) solo se calcula si las demás no llegan a este parecido (el visor descarta bajo 0,55); ahorra ~0,5 s por escaneo
 EARLY_STOP = 0.75  # si una candidata ya llega a este parecido no se calculan las demás (cada embedding cuesta CPU)
 CARD_RATIO = 63 / 88
 
@@ -480,6 +481,8 @@ async def scan(request: Request):
     best, n_emb = None, 0
     with lock:
         for label, img in cands:
+            if label == "E1 girada" and best is not None and best["top"][0][1] >= FLIP_BELOW:
+                break
             res = svc.embed(norm_luz(img))
             if res.spec.key != REF_SPEC["key"]:
                 return JSONResponse({"error": f"el extractor cambió ({res.spec.key}); reinicia el visor"}, status_code=503)
@@ -576,6 +579,18 @@ async def scan(request: Request):
     tm["otras ediciones+datos"] = time.perf_counter() - mark
     if SERVICE_MODE:  # una línea por escaneo en el registro del contenedor: dónde se va el tiempo
         print("scan " + f"total={(time.perf_counter() - t0) * 1000:.0f}ms bytes={len(data)} candidatas={n_emb} " + " ".join(f"{k.replace(' ', '_')}={v * 1000:.0f}ms" for k, v in tm.items()), flush=True)
+    if os.environ.get("VISOR_DEBUG"):  # solo diagnóstico local (no se sube): guarda la foto recibida y anota candidatas y lectura del OCR
+        try:
+            dbg = DATA / "debug"
+            dbg.mkdir(parents=True, exist_ok=True)
+            sid = time.strftime("%H%M%S") + f"_{int(time.perf_counter() * 1000) % 1000:03d}"
+            (dbg / f"{sid}.jpg").write_bytes(data)
+            print(f"DEBUG {sid} fuente={best['label']} ocr_nombre={ocr_info.get('name')} boost={ocr_info.get('boost')} idioma={ocr_info.get('language')} liga={ocr_info.get('league')}", flush=True)
+            for i, s_ in best["top"][:5]:
+                m_ = meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i]))
+                print(f"   {s_:.3f} {m_.get('name')} | {m_.get('number')} | {m_.get('set')} | cat {m_.get('category_id')}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print("debug falló:", exc, flush=True)
     prev = cv2.imencode(".jpg", cv2.resize(best["img"], (110, 154)))[1].tobytes()
     return {"found": True, "source": best["label"], "e1": bool(e1.found), "e1_conf": round(float(e1.confidence), 3),
             "top": [{**meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i])), "score": round(s, 4), "group": NAME_OF[i] if i < len(NAME_OF) else ""} for i, s in best["top"]],
