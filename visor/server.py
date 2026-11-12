@@ -578,7 +578,7 @@ async def scan(request: Request):
         pass
     tm["otras ediciones+datos"] = time.perf_counter() - mark
     if SERVICE_MODE:  # una línea por escaneo en el registro del contenedor: dónde se va el tiempo
-        print("scan " + f"total={(time.perf_counter() - t0) * 1000:.0f}ms bytes={len(data)} candidatas={n_emb} " + " ".join(f"{k.replace(' ', '_')}={v * 1000:.0f}ms" for k, v in tm.items()), flush=True)
+        print("scan " + f"cpus={os.cpu_count()} carga={os.getloadavg()[0]:.1f} total={(time.perf_counter() - t0) * 1000:.0f}ms bytes={len(data)} candidatas={n_emb} " + " ".join(f"{k.replace(' ', '_')}={v * 1000:.0f}ms" for k, v in tm.items()), flush=True)
     if os.environ.get("VISOR_DEBUG"):  # solo diagnóstico local (no se sube): guarda la foto recibida y anota candidatas y lectura del OCR
         try:
             dbg = DATA / "debug"
