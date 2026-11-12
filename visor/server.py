@@ -173,6 +173,7 @@ WORD_RE = re.compile(r"[a-záéíóúñü']+")
 STAMP_PATH = Path(__file__).with_name("league_stamp.png")
 STAMP_TPL = cv2.imread(str(STAMP_PATH), cv2.IMREAD_GRAYSCALE) if STAMP_PATH.exists() else None
 STAMP_REL_W = 302 / 1629  # ancho del sello respecto del ancho de la carta en la foto de la plantilla
+NO_STAMP_MAX = 0.5  # por debajo: sin sello (las 48 cartas normales medidas llegaron a 0,49 como máximo)
 STAMP_MIN = 0.6  # medido: 21 de 21 cartas de liga ≥ 0,67 y 0 falsos positivos en 48 cartas normales (máximo 0,49)
 
 
@@ -534,7 +535,12 @@ async def scan(request: Request):
             sims = REF_SPEC["mat"][ids] @ best["vec"]
             nm, nu = set(name_idx), set(num_idx)
             ok_vis = sims >= 0.45  # un nombre leido solo suma si la carta tambien se parece visualmente
-            league_boost = (np.where(REF_SPEC["prize"][ids], 0.25, -0.05) if ocr_info.get("league", 0) >= STAMP_MIN else 0.0) * (sims >= sims.max() - 0.10)  # con sello de liga: la versión de liga manda, pero solo entre cartas que ya se parecen a la mejor (el sello no identifica)
+            seen_stamp = ocr_info.get("league")  # None: no se midió el sello (no es una búsqueda de Pokémon)
+            if seen_stamp is None: league_boost = 0.0
+            elif seen_stamp >= STAMP_MIN: league_boost = np.where(REF_SPEC["prize"][ids], 0.25, -0.05)
+            elif seen_stamp < NO_STAMP_MAX: league_boost = np.where(REF_SPEC["prize"][ids], -0.05, 0.0)  # sin sello claro: la edición normal gana el empate con su versión de liga
+            else: league_boost = 0.0
+            league_boost = league_boost * (sims >= sims.max() - 0.10)  # con sello de liga: la versión de liga manda, pero solo entre cartas que ya se parecen a la mejor (el sello no identifica)
             final = sims + ok_vis * (np.array([0.20 if i in nm else 0.0 for i in ids.tolist()]) + np.array([0.25 if i in nu else 0.0 for i in ids.tolist()]) + league_boost)
             order = np.argsort(-final)[:5]
             best["top"] = [(int(ids[j]), float(final[j])) for j in order]
