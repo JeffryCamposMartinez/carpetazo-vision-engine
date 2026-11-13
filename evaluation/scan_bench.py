@@ -100,6 +100,8 @@ def scan(data, crop=None):
     headers = {"x-service-key": KEY, "content-type": "application/octet-stream"}
     if crop and os.environ.get("BENCH_CROP") == "1":
         headers["x-crop"] = crop  # como la app: marco aproximado de la carta
+    if os.environ.get("BENCH_WEIGHTS"):
+        headers["x-weights"] = os.environ["BENCH_WEIGHTS"]  # «nombre,numero,ambos»; el motor lo acepta solo con VISOR_BENCH=1
     req = urllib.request.Request(URL + "/scan", data=data, method="POST", headers=headers)
     t = time.time()
     with urllib.request.urlopen(req, timeout=90) as r:
