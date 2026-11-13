@@ -443,6 +443,26 @@ async def lab_feedback(request: Request):
     return {"ok": True, "acerto_primero": info["etiqueta"]["acerto_primero"], "aprendidas": int(len(LEARN["pid"]))}
 
 
+@app.post("/lab/reset")
+async def lab_reset(request: Request):
+    """Borra todo lo guardado en el laboratorio (fotos, etiquetas y lo aprendido). Pide confirmación explícita."""
+    if not LAB:
+        return JSONResponse({}, status_code=404)
+    try:
+        ok = _json.loads((await request.body())[:200]).get("confirmar") == "borrar todo"
+    except Exception:  # noqa: BLE001
+        ok = False
+    if not ok:
+        return JSONResponse({"error": "falta la confirmación"}, status_code=400)
+    with LAB_LOCK:
+        n = 0
+        for f in LAB_DIR.glob("*"):
+            if f.suffix in (".jpg", ".json", ".npy", ".npz"):
+                f.unlink(); n += 1
+        LEARN.update(mat=None, cat=None, pid=None)
+    return {"ok": True, "borrados": n}
+
+
 @app.get("/lab/stats")
 def lab_stats():
     if not LAB:
