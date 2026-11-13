@@ -106,6 +106,7 @@ NAME_IDX: dict = {}
 NUM_IDX: dict = {}
 NAME_BUCKET: dict = {}
 NAME_OF: list = []
+PIDX: dict = {}  # (categoría, producto) -> posición en el índice
 
 
 def build_meta() -> None:
@@ -129,6 +130,8 @@ def build_meta() -> None:
     for k in NAME_IDX:
         NAME_BUCKET.setdefault(k[0], []).append(k)
     REF_SPEC["prize"] = np.array(prize, dtype=bool)
+    PIDX.clear()
+    PIDX.update({(c, p): i for i, (c, p) in enumerate(zip(REF_SPEC["cat"].tolist(), REF_SPEC["pid"].tolist()))})
 
 
 class Ocr:
@@ -267,6 +270,9 @@ def number_keys(text: str) -> list:
 # Pesos del puntaje final (se afinan con evaluation/scan_bench.py; con VISOR_BENCH=1 la cabecera x-weights los cambia solo en esa petición)
 WEIGHTS = {"name": float(os.environ.get("VISOR_W_NAME", "0.20")), "num": float(os.environ.get("VISOR_W_NUM", "0.25")), "both": float(os.environ.get("VISOR_W_BOTH", "0.15"))}
 BENCH = os.environ.get("VISOR_BENCH") == "1"
+LAB = os.environ.get("VISOR_LAB") == "1"  # laboratorio de entrenamiento (solo la instancia de pruebas): página con el visor, guarda cada escaneo y aprende de las confirmaciones
+WEIGHTS["learn"] = float(os.environ.get("VISOR_W_LEARN", "0.30"))  # peso de las fotos reales ya confirmadas
+LEARN_MIN = 0.80  # parecido mínimo con una foto confirmada para que cuente
 
 
 def match_names(ls: list) -> tuple:
@@ -331,12 +337,23 @@ import json as _json  # noqa: E402
 HERE = Path(__file__).parent
 DATA = Path(os.environ.get("VISOR_DATA_DIR", str(HERE / "data")))
 DATA.mkdir(parents=True, exist_ok=True)
+LAB_DIR = DATA / "aprendizaje"  # fotos de los escaneos, su resultado, las confirmaciones y los vectores aprendidos
+LEARN = {"mat": None, "cat": None, "pid": None}  # fotos reales confirmadas: cada una enseña cómo se ve esa carta en una foto
+LAB_LOCK = threading.Lock()
+
+
+def load_learn() -> None:
+    f = LAB_DIR / "aprendido.npz"
+    if f.exists():
+        z = np.load(f)
+        LEARN.update(mat=z["vec"].astype(np.float32), cat=z["cat"], pid=z["pid"])
+        print(f"fotos aprendidas: {len(LEARN['pid'])}", flush=True)
 DEFAULT_CFG = {"movMax": 14, "sharpMin": 12, "stillFrames": 2, "sdMin": 14, "meanMin": 25, "meanMax": 245, "glareMax": 0.18, "torchAuto": False, "exposureAuto": True, "votes": 3, "minScore": 0.55, "noCardGapMs": 1200, "window": 5, "scanGapMs": 250}
 
 
 def authorized(request: Request) -> bool:
     """En modo servicio solo pasa quien manda una clave de servicio válida (comparación en tiempo constante)."""
-    if not SERVICE_MODE:
+    if not SERVICE_MODE or LAB:
         return True
     sent = request.headers.get("x-service-key", "")
     return bool(sent) and any(hmac.compare_digest(sent, k) for k in SERVICE_KEYS)
@@ -349,6 +366,8 @@ def health():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
+    if LAB:
+        return (HERE / "lab.html").read_text(encoding="utf-8")
     if SERVICE_MODE:
         return HTMLResponse("", status_code=404)
     return (HERE / "index.html").read_text(encoding="utf-8")
@@ -372,6 +391,74 @@ async def telemetry(request: Request):
     with open(DATA / "telemetria.jsonl", "a", encoding="utf-8") as f:
         f.write(body.replace(chr(10), " ") + chr(10))
     return {"ok": True}
+
+
+SID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+@app.get("/lab/search")
+def lab_search(q: str = "", games: str = ""):
+    """Búsqueda por nombre en el catálogo (para corregir cuando el resultado no era la carta)."""
+    if not LAB:
+        return JSONResponse({}, status_code=404)
+    q = q.strip()[:60]
+    if len(q) < 2:
+        return {"cards": []}
+    cats = [int(x) for x in games.split(",") if x.strip().isdigit() and int(x) in LANG] or list(LANG)
+    esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    con = sqlite3.connect(f"file:{CATDB}?mode=ro", uri=True)
+    try:
+        rows = con.execute(f"select c.category_id,c.product_id,c.name,c.number,c.rarity,c.image_url,s.name from mirror_cards c left join mirror_sets s on s.category_id=c.category_id and s.group_id=c.group_id where c.name like ? escape '\\' and c.category_id in ({','.join('?' * len(cats))}) order by length(c.name) limit 30", (f"%{esc}%", *cats)).fetchall()
+    finally:
+        con.close()
+    return {"cards": [{"category_id": r[0], "product_id": r[1], "name": r[2], "number": r[3], "rarity": r[4], "image": r[5], "set": r[6], "lang": LANG.get(r[0], str(r[0]))} for r in rows]}
+
+
+@app.post("/lab/feedback")
+async def lab_feedback(request: Request):
+    """La persona confirma o corrige la carta de un escaneo: queda guardado y su foto enseña al motor cómo se ve esa carta."""
+    if not LAB:
+        return JSONResponse({}, status_code=404)
+    try:
+        body = _json.loads((await request.body())[:2000])
+        sid, cat, pid = str(body["scan_id"]), int(body["category_id"]), int(body["product_id"])
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"error": "datos inválidos"}, status_code=400)
+    if not SID_RE.match(sid) or cat not in LANG or (cat, pid) not in PIDX:
+        return JSONResponse({"error": "carta o escaneo desconocido"}, status_code=400)
+    meta_f, vec_f = LAB_DIR / f"{sid}.json", LAB_DIR / f"{sid}.npy"
+    if not meta_f.exists() or not vec_f.exists():
+        return JSONResponse({"error": "escaneo no encontrado"}, status_code=404)
+    with LAB_LOCK:
+        info = _json.loads(meta_f.read_text(encoding="utf-8"))
+        top1 = (info["resultado"]["top"] or [{}])[0]
+        info["etiqueta"] = {"category_id": cat, "product_id": pid, "acerto_primero": (top1.get("category_id"), top1.get("product_id")) == (cat, pid), "t": int(time.time())}
+        meta_f.write_text(_json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        vec = np.load(vec_f).astype(np.float32)[None, :]
+        if LEARN["mat"] is None:
+            LEARN.update(mat=vec, cat=np.array([cat], np.int32), pid=np.array([pid], np.int64))
+        else:
+            LEARN.update(mat=np.concatenate([LEARN["mat"], vec]), cat=np.concatenate([LEARN["cat"], [cat]]).astype(np.int32), pid=np.concatenate([LEARN["pid"], [pid]]).astype(np.int64))
+        np.savez(LAB_DIR / "aprendido.npz", cat=LEARN["cat"], pid=LEARN["pid"], vec=LEARN["mat"].astype(np.float16))
+    return {"ok": True, "acerto_primero": info["etiqueta"]["acerto_primero"], "aprendidas": int(len(LEARN["pid"]))}
+
+
+@app.get("/lab/stats")
+def lab_stats():
+    if not LAB:
+        return JSONResponse({}, status_code=404)
+    scans, labeled = 0, []
+    for f in sorted(LAB_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime):
+        scans += 1
+        try:
+            et = _json.loads(f.read_text(encoding="utf-8")).get("etiqueta")
+        except Exception:  # noqa: BLE001
+            continue
+        if et:
+            labeled.append(bool(et["acerto_primero"]))
+    last = labeled[-20:]
+    return {"escaneos": scans, "etiquetados": len(labeled), "aciertos": sum(labeled), "acierto_pct": round(100 * sum(labeled) / len(labeled), 1) if labeled else None,
+            "ultimos20_pct": round(100 * sum(last) / len(last), 1) if last else None, "aprendidas": 0 if LEARN["pid"] is None else int(len(LEARN["pid"]))}
 
 
 @app.get("/status")
@@ -603,6 +690,14 @@ async def scan(request: Request):
                 name_idx = [i for i in name_idx if gm[i]]; num_idx = [i for i in num_idx if gm[i]]
             vis_all = vis_full if gm is None else np.where(gm, vis_full, -1.0)
             pool = set(np.argsort(-vis_all)[:50].tolist()) | set(name_idx) | set(num_idx)
+            learn_boost = {}  # cartas cuya foto real confirmada se parece a esta
+            if LEARN["mat"] is not None:
+                ls = LEARN["mat"] @ best["vec"]
+                for j in np.argsort(-ls)[:8].tolist():
+                    i = PIDX.get((int(LEARN["cat"][j]), int(LEARN["pid"][j])))
+                    if ls[j] >= LEARN_MIN and i is not None and (gm is None or bool(gm[i])):
+                        learn_boost[i] = max(learn_boost.get(i, 0.0), float((ls[j] - LEARN_MIN) / (1 - LEARN_MIN)))
+                pool |= set(learn_boost)
             ids = np.array(sorted(pool))
             sims = REF_SPEC["mat"][ids] @ best["vec"]
             nm, nu = set(name_idx), set(num_idx)
@@ -616,11 +711,12 @@ async def scan(request: Request):
             w = dict(WEIGHTS)
             if BENCH and request.headers.get("x-weights"):  # solo para calibrar con el banco de pruebas: «nombre,numero,ambos»
                 try:
-                    w.update(zip(("name", "num", "both"), [float(x) for x in request.headers["x-weights"].split(",")]))
+                    w.update(zip(("name", "num", "both", "learn"), [float(x) for x in request.headers["x-weights"].split(",")]))
                 except ValueError:
                     pass
             both = np.array([w["both"] if (i in nm and i in nu) else 0.0 for i in ids.tolist()])  # nombre y número a la vez: lo que distingue una edición de otra
-            final = sims + ok_vis * (np.array([w["name"] if i in nm else 0.0 for i in ids.tolist()]) + np.array([w["num"] if i in nu else 0.0 for i in ids.tolist()]) + both + league_boost)
+            learned = np.array([learn_boost.get(i, 0.0) for i in ids.tolist()]) * w.get("learn", 0.0)
+            final = sims + learned + ok_vis * (np.array([w["name"] if i in nm else 0.0 for i in ids.tolist()]) + np.array([w["num"] if i in nu else 0.0 for i in ids.tolist()]) + both + league_boost)
             order = np.argsort(-final)[:5]
             best["top"] = [(int(ids[j]), float(final[j])) for j in order]
             ocr_info["boost"] = round(float(final[order[0]] - sims[order[0]]), 2)
@@ -656,10 +752,22 @@ async def scan(request: Request):
     if SERVICE_MODE:  # una línea por escaneo en el registro del contenedor: dónde se va el tiempo
         print("scan " + f"total={(time.perf_counter() - t0) * 1000:.0f}ms bytes={len(data)} candidatas={n_emb} " + " ".join(f"{k.replace(' ', '_')}={v * 1000:.0f}ms" for k, v in tm.items()), flush=True)
     prev = cv2.imencode(".jpg", cv2.resize(best["img"], (110, 154)))[1].tobytes()
-    return {"found": True, "source": best["label"], "e1": bool(e1.found), "e1_conf": round(float(e1.confidence), 3),
+    out = {"found": True, "source": best["label"], "e1": bool(e1.found), "e1_conf": round(float(e1.confidence), 3),
             "top": [{**meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i])), "score": round(s, 4), "group": NAME_OF[i] if i < len(NAME_OF) else ""} for i, s in best["top"]],
             "same": same, "indexed": int(len(REF_SPEC["pid"])), "ocr": ocr_info,
             "preview": "data:image/jpeg;base64," + base64.b64encode(prev).decode(), "ms": round((time.perf_counter() - t0) * 1000)}
+    if LAB:
+        try:
+            sid = uuid.uuid4().hex
+            LAB_DIR.mkdir(parents=True, exist_ok=True)
+            (LAB_DIR / f"{sid}.jpg").write_bytes(data)
+            np.save(LAB_DIR / f"{sid}.npy", np.asarray(best["vec"], np.float16))
+            slim = {"found": True, "source": best["label"], "ms": out["ms"], "ocr": out["ocr"], "top": [{k: t.get(k) for k in ("name", "number", "set", "rarity", "lang", "category_id", "product_id", "score")} for t in out["top"]]}
+            (LAB_DIR / f"{sid}.json").write_text(_json.dumps({"id": sid, "t": int(time.time()), "crop": request.headers.get("x-crop", ""), "games": request.headers.get("x-games", ""), "aprendidas_antes": 0 if LEARN["pid"] is None else int(len(LEARN["pid"])), "resultado": slim, "etiqueta": None}, ensure_ascii=False), encoding="utf-8")
+            out["scan_id"] = sid
+        except Exception as exc:  # noqa: BLE001
+            print("guardar escaneo fallo:", exc, flush=True)
+    return out
 
 
 def warm_up() -> None:
@@ -675,6 +783,13 @@ def warm_up() -> None:
 
 if __name__ == "__main__":
     load_index()
+    if LAB:
+        LAB_DIR.mkdir(parents=True, exist_ok=True)
+        load_learn()
+        if not CERT:  # la cámara del navegador exige HTTPS: certificado propio (el navegador pedirá aceptarlo una vez)
+            CERT, KEY = str(LAB_DIR / "lab.crt"), str(LAB_DIR / "lab.key")
+            if not Path(CERT).exists():
+                subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650", "-subj", "/CN=carpetazo-lab", "-keyout", KEY, "-out", CERT], check=True, capture_output=True)  # noqa: S603,S607
     STATE["t"] = time.time()
     if SERVICE_MODE:
         threading.Thread(target=warm_up, daemon=True).start()
