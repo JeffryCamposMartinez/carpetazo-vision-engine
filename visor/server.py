@@ -148,7 +148,7 @@ class Ocr:
         self.p = subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(Path(__file__).with_name("ocr_worker.ps1"))],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", bufsize=1)
 
-    def read(self, path: str, lang: str, psm: int = 6) -> list[str]:
+    def read(self, path: str, lang: str, psm: int = 6, whitelist: str = "") -> list[str]:
         with self.lock:
             try:
                 if self.p is None or self.p.poll() is not None:
@@ -166,9 +166,10 @@ class OcrTesseract:
 
     LANGS = {"en-US": "eng", "es-ES": "spa", "multi": "eng+spa"}
 
-    def read(self, path: str, lang: str, psm: int = 6) -> list[str]:
+    def read(self, path: str, lang: str, psm: int = 6, whitelist: str = "") -> list[str]:
         try:
-            r = subprocess.run(["tesseract", path, "stdout", "-l", self.LANGS.get(lang, "eng"), "--psm", str(psm)], capture_output=True, text=True, timeout=10, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"})  # noqa: S603,S607
+            extra = ["-c", f"tessedit_char_whitelist={whitelist}", "--dpi", "300"] if whitelist else []
+            r = subprocess.run(["tesseract", path, "stdout", "-l", self.LANGS.get(lang, "eng"), "--psm", str(psm), *extra], capture_output=True, text=True, timeout=10, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"})  # noqa: S603,S607
             return [x.strip() for x in r.stdout.splitlines() if x.strip()]
         except Exception:  # noqa: BLE001
             return []
@@ -240,6 +241,9 @@ def strip_text(piece: np.ndarray) -> str:
         Path(path).unlink(missing_ok=True)
 
 
+NUM_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/-"
+
+
 def region_reads(piece: np.ndarray, cats: list) -> dict:
     """Lee el número impreso en la zona que usa cada juego candidato (impreso.REGIONS). -> {juego: (número, sigla, texto leído)}"""
     out = {}
@@ -249,7 +253,7 @@ def region_reads(piece: np.ndarray, cats: list) -> dict:
         if not regions:
             continue
         number, code, text = None, None, ""
-        for psm in (7, 11):  # una línea y, si no sale número, texto suelto
+        for psm in (7, 11):  # una línea y, si no sale ni un dígito, texto suelto
             texts = []
             for x, y, rw, rh in regions:
                 crop = piece[int(y * h): int((y + rh) * h) + 1, int(x * w): int((x + rw) * w) + 1]
@@ -261,12 +265,12 @@ def region_reads(piece: np.ndarray, cats: list) -> dict:
                 path = str(DATA / f"ocr_{uuid.uuid4().hex}.png")
                 cv2.imwrite(path, big)
                 try:
-                    texts += OCR.read(path, "multi", psm) if isinstance(OCR, OcrTesseract) else OCR.read(path, "en-US")
+                    texts += OCR.read(path, "en-US", psm, NUM_CHARS)  # solo inglés y solo los caracteres de un número: más rápido y más exacto en letra chica
                 finally:
                     Path(path).unlink(missing_ok=True)
             text = "\n".join(texts)
             number, code = impreso.parse_ocr(game, text)
-            if number:
+            if number or re.search(r"\d", text):  # con dígitos leídos no se repite en otro modo
                 break
         out[game] = (number, code, text[:120])
     return out
