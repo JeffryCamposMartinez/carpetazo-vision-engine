@@ -228,7 +228,17 @@ def detect_language(text: str, top_cat: int | None) -> dict:
     elif top_cat == 85:
         info.update(code="ja", conf=0.6, source="visual")  # sin texto latino legible y la más parecida es la versión japonesa
     return info
-NUMRE = re.compile(r"\b(\d{1,3}\s*/\s*[0-9A-Z]{2,5})\b|\b([A-Z0-9]{2,6}-[A-Z]{0,3}\d{2,4})\b")
+NUMRE = re.compile(r"\b(\d{1,3}\s*/\s*[0-9A-Z]{2,5})\b|\b([A-Z0-9]{2,6}-[A-Z]{0,3}\d{2,4})\b|\b(\d{3,4})\s+[CURMSTLP]\b")  # 182/182 · BT5-032 · «0162 R» (Magic)
+
+
+def number_keys(text: str) -> list:
+    """Números de coleccionista que aparecen en el texto leído, ya normalizados."""
+    return [nnum(m.group(1) or m.group(2) or m.group(3)) for m in NUMRE.finditer(text.upper())]
+
+
+# Pesos del puntaje final (se afinan con evaluation/scan_bench.py; con VISOR_BENCH=1 la cabecera x-weights los cambia solo en esa petición)
+WEIGHTS = {"name": float(os.environ.get("VISOR_W_NAME", "0.20")), "num": float(os.environ.get("VISOR_W_NUM", "0.25")), "both": float(os.environ.get("VISOR_W_BOTH", "0.15"))}
+BENCH = os.environ.get("VISOR_BENCH") == "1"
 
 
 def ocr_hits(piece: np.ndarray):
@@ -258,11 +268,9 @@ def ocr_hits(piece: np.ndarray):
                 elif len(k) >= 6:
                     for m in difflib.get_close_matches(k, [x for x in NAME_BUCKET.get(k[0], []) if abs(len(x) - len(k)) <= 3], n=2, cutoff=0.86):
                         name_idx += NAME_IDX[m][:300]; names_found.append(m + "~")
-        for ln in ls:
-            for m in NUMRE.finditer(ln.upper()):
-                nk = nnum(m.group(0))
-                if nk in NUM_IDX:
-                    num_idx += NUM_IDX[nk][:300]
+        for nk in number_keys(" ".join(ls)):
+            if nk in NUM_IDX:
+                num_idx += NUM_IDX[nk][:300]
         if names_found:
             break
     Path(path).unlink(missing_ok=True)
@@ -364,9 +372,25 @@ def search(vec: np.ndarray, k: int = 5):
 
 
 STRAIGHT_MAX_H = 1600  # alto máximo de la foto enderezada
+OCR_MAX_H = 1300  # alto de la carta enderezada que se le da al OCR
 
 
-STRAIGHT_MAX_H = 1600  # alto máximo de la foto enderezada
+def rectify_hires(arr: np.ndarray, d) -> "np.ndarray | None":
+    """La carta enderezada a la resolución de la foto: el OCR lee mejor ahí que sobre la foto entera o el reducido de 440x614. None si el cuadrilátero no parece una carta."""
+    m = d.metrics
+    if not d.found or m.area_fraction < 0.25 or not 0.62 <= m.aspect_ratio <= 0.80 or m.rectangularity < 0.75 or m.perspective_skew > 0.5:
+        return None
+    q = order_quad(d.quad)
+    top, right, bottom, left = _side_lengths(q)
+    if (top + bottom) / 2 > (left + right) / 2:
+        q = np.roll(q, -1, axis=0)
+        top, right, bottom, left = _side_lengths(q)
+    h = int(min(OCR_MAX_H, max(left, right)))
+    if h < 300:
+        return None
+    w = int(round(h * CANON_W / CANON_H))
+    dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], np.float32)
+    return cv2.warpPerspective(arr, cv2.getPerspectiveTransform(q.astype(np.float32), dst), (w, h), flags=cv2.INTER_CUBIC)
 
 
 def visual_certainty(vec: np.ndarray) -> dict:
@@ -462,7 +486,8 @@ async def scan(request: Request):
     if not cands:
         return {"found": False, "ms": round((time.perf_counter() - t0) * 1000)}
     # el OCR (nombre y texto del cuerpo) no depende del embedding: arranca a la vez y se solapan
-    piece_ocr = piece if (piece is not None and piece.size) else arr
+    hi = rectify_hires(arr, e1) if e1.found else None  # carta enderezada: mejor para el OCR que la foto entera o el marco a ojo
+    piece_ocr = hi if hi is not None else (piece if (piece is not None and piece.size) else arr)
     names_box, body_box, readers = {"r": ([], [], [], [])}, {}, []
 
     def _names():
@@ -473,8 +498,8 @@ async def scan(request: Request):
 
     readers.append(threading.Thread(target=_names, daemon=True))
     gm0, cat0 = GMASK["m"], REF_SPEC["cat"]
-    if gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS))):  # hay Pokémon en juego: el texto del cuerpo (idioma y número)
-        readers.append(threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True))
+    pokemon_in_play = gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS)))  # con Pokémon en juego el cuerpo también da el idioma
+    readers.append(threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True))  # el número impreso sirve en todos los juegos
     for th in readers:
         th.start()
     best, n_emb = None, 0
@@ -495,20 +520,23 @@ async def scan(request: Request):
         try:
             for th in readers:
                 th.join()
+            if best["label"] == "E1 girada" and hi is not None:  # la carta estaba al revés: se lee otra vez al derecho
+                hi180 = cv2.rotate(hi, cv2.ROTATE_180)
+                names_box["r"] = ocr_hits(hi180)
+                body_box["text"] = body_text(hi180)
+                piece_ocr = hi180
             name_idx, num_idx, lines, found = names_box["r"]
+            for nk in number_keys(body_box.get("text", "")):  # número impreso del cuerpo, en cualquier juego
+                if nk in NUM_IDX:
+                    num_idx += NUM_IDX[nk][:300]
             ocr_info.update(name=found, lines=lines[:4])
             gm = GMASK["m"]
             vis_full = REF_SPEC["mat"] @ best["vec"]
             cat_arr = REF_SPEC["cat"]
             lang_info = {"code": None, "conf": 0.0, "source": "none"}
-            if gm is None or bool(np.any(gm & np.isin(cat_arr, PK_CATS))):  # la carpeta/juego incluye Pokémon: se detecta el idioma
+            if pokemon_in_play:  # la carpeta/juego incluye Pokémon: se detecta el idioma
                 body = body_box.get("text", "")
                 lang_info = detect_language(body, int(cat_arr[best["top"][0][0]]))
-                # el número impreso («182/182») que salió en ese texto también suma: distingue reimpresiones y versiones de liga
-                for m in NUMRE.finditer(body.upper()):
-                    nk = nnum(m.group(0))
-                    if nk in NUM_IDX:
-                        num_idx += NUM_IDX[nk][:300]
                 stamp = league_stamp(piece_ocr)
                 is_league = stamp >= STAMP_MIN
                 ocr_info["league"] = round(stamp, 2)
@@ -541,7 +569,14 @@ async def scan(request: Request):
             elif seen_stamp < NO_STAMP_MAX: league_boost = np.where(REF_SPEC["prize"][ids], -0.05, 0.0)  # sin sello claro: la edición normal gana el empate con su versión de liga
             else: league_boost = 0.0
             league_boost = league_boost * (sims >= sims.max() - 0.10)  # con sello de liga: la versión de liga manda, pero solo entre cartas que ya se parecen a la mejor (el sello no identifica)
-            final = sims + ok_vis * (np.array([0.20 if i in nm else 0.0 for i in ids.tolist()]) + np.array([0.25 if i in nu else 0.0 for i in ids.tolist()]) + league_boost)
+            w = dict(WEIGHTS)
+            if BENCH and request.headers.get("x-weights"):  # solo para calibrar con el banco de pruebas: «nombre,numero,ambos»
+                try:
+                    w.update(zip(("name", "num", "both"), [float(x) for x in request.headers["x-weights"].split(",")]))
+                except ValueError:
+                    pass
+            both = np.array([w["both"] if (i in nm and i in nu) else 0.0 for i in ids.tolist()])  # nombre y número a la vez: lo que distingue una edición de otra
+            final = sims + ok_vis * (np.array([w["name"] if i in nm else 0.0 for i in ids.tolist()]) + np.array([w["num"] if i in nu else 0.0 for i in ids.tolist()]) + both + league_boost)
             order = np.argsort(-final)[:5]
             best["top"] = [(int(ids[j]), float(final[j])) for j in order]
             ocr_info["boost"] = round(float(final[order[0]] - sims[order[0]]), 2)
