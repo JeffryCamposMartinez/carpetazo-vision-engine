@@ -7,6 +7,7 @@ Uso:  VISOR_URL=http://192.168.1.19:8001 VISOR_KEY=... python evaluation/scan_be
 Mitad de la muestra son cartas con reimpresiones (mismo nombre en varias ediciones): es lo difícil de acertar.
 """
 import io
+import ssl
 import json
 import os
 import random
@@ -102,9 +103,10 @@ def scan(data, crop=None):
         headers["x-crop"] = crop  # como la app: marco aproximado de la carta
     if os.environ.get("BENCH_WEIGHTS"):
         headers["x-weights"] = os.environ["BENCH_WEIGHTS"]  # «nombre,numero,ambos»; el motor lo acepta solo con VISOR_BENCH=1
+    headers["x-bench"] = "1"  # el laboratorio no guarda estos escaneos
     req = urllib.request.Request(URL + "/scan", data=data, method="POST", headers=headers)
     t = time.time()
-    with urllib.request.urlopen(req, timeout=90) as r:
+    with urllib.request.urlopen(req, timeout=90, context=ssl._create_unverified_context() if URL.startswith("https") else None) as r:
         return json.load(r), time.time() - t
 
 

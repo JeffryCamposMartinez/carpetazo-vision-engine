@@ -863,7 +863,7 @@ async def scan(request: Request):
             "top": [{**meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i])), "score": round(s, 4), "group": NAME_OF[i] if i < len(NAME_OF) else ""} for i, s in best["top"]],
             "same": same, "indexed": int(len(REF_SPEC["pid"])), "ocr": ocr_info, "status": ocr_info.get("status"), "reasons": ocr_info.get("reasons", []),
             "preview": "data:image/jpeg;base64," + base64.b64encode(prev).decode(), "ms": round((time.perf_counter() - t0) * 1000)}
-    if LAB:
+    if LAB and not (BENCH and request.headers.get("x-bench")):  # el banco de pruebas manda x-bench y no ensucia el laboratorio
         try:
             sid = uuid.uuid4().hex
             LAB_DIR.mkdir(parents=True, exist_ok=True)
