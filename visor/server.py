@@ -93,6 +93,15 @@ def nnum(s: str) -> str:
     return re.sub(r"(?<!\d)0+(?=\d)", "", re.sub(r"\s+", "", (s or "").upper()))
 
 
+CONFUSIONS = str.maketrans("OIJLSBZ", "0111582")  # el OCR confunde O/0, I/l/1, S/5, B/8, Z/2 en letra chica; se igualan de los dos lados
+
+
+def nkey(s: str) -> str:
+    """Clave de comparación de un número de coleccionista («OP07-033», «058/102», «0192»): sin signos, sin ceros a la izquierda y con las confusiones del OCR igualadas."""
+    k = re.sub(r"[^A-Z0-9]", "", (s or "").upper()).translate(CONFUSIONS)
+    return re.sub(r"(?<!\d)0+(?=\d)", "", k)
+
+
 NAME_IDX: dict = {}
 NUM_IDX: dict = {}
 NAME_BUCKET: dict = {}
@@ -114,9 +123,9 @@ def build_meta() -> None:
         NAME_OF.append(k)
         if len(k) >= 3:
             NAME_IDX.setdefault(k, []).append(i)
-        nk = nnum(nu)
-        if len(nk) >= 3:
-            NUM_IDX.setdefault(nk, []).append(i)
+        for nk in {nkey(nu), nkey((nu or "").split(" ")[0])}:  # «BT15-101 SEC»: también sin la rareza
+            if len(nk) >= 3:
+                NUM_IDX.setdefault(nk, []).append(i)
     for k in NAME_IDX:
         NAME_BUCKET.setdefault(k[0], []).append(k)
     REF_SPEC["prize"] = np.array(prize, dtype=bool)
@@ -241,12 +250,21 @@ def detect_language(text: str, top_cat: int | None) -> dict:
     elif top_cat == 85:
         info.update(code="ja", conf=0.6, source="visual")  # sin texto latino legible y la más parecida es la versión japonesa
     return info
-NUMRE = re.compile(r"\b(\d{1,3}\s*/\s*[0-9A-Z]{2,5})\b|\b([A-Z0-9]{2,6}-[A-Z]{0,3}\d{2,4})\b|\b(\d{3,4})\s+[CURMSTLP]\b")  # 182/182 · BT5-032 · «0162 R» (Magic)
+TOKEN_RE = re.compile(r"[A-Z0-9]+(?:[-/ ][A-Z0-9]+)?")
 
 
 def number_keys(text: str) -> list:
-    """Números de coleccionista que aparecen en el texto leído, ya normalizados."""
-    return [nnum(m.group(1) or m.group(2) or m.group(3)) for m in NUMRE.finditer(text.upper())]
+    """Claves de número de coleccionista de todo lo que parece un número en el texto leído: «190/271» (y su parte «190»), «OP14-028», «0192»…"""
+    keys = set()
+    for tok in TOKEN_RE.findall(text.upper()):
+        if not re.search(r"\d", tok):
+            continue
+        parts = {tok, tok.split("/")[0], *tok.split(" ")}  # «190/271» → «190» (Magic imprime el total aparte); «R 0241» → «0241»
+        for part in parts:
+            k = nkey(part)
+            if len(k) >= 3 and re.search(r"\d", k):
+                keys.add(k)
+    return list(keys)
 
 
 # Pesos del puntaje final (se afinan con evaluation/scan_bench.py; con VISOR_BENCH=1 la cabecera x-weights los cambia solo en esa petición)
