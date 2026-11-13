@@ -139,28 +139,40 @@ async function scan(){
  try{const j=await (await fetch('/scan',{method:'POST',body:blob,headers:{'x-crop':crop,'x-games':gamesHeader()}})).json();vote(j)}catch(e){msgEl.textContent='Error: '+e.message;g.className=''}
  busy=false;}
 function quality(top,mm){const m=(mm!=null)?mm:top[0].score-top[1].score;return {m,ok:top[0].score>=.75&&m>=.06}}
+const OCR_MIN=.6,SURE_MIN=.82;
+const STATUS={confirmado:['ok','Confirmado'],probable:['ok','Probable'],ambiguo:['mid','Ambiguo: elige la impresión'],dudosa:['mid','Dudoso'],sin_coincidencias:['mid','Sin coincidencias']};
 function vote(j){
  if(j.error){msgEl.textContent=j.error;g.className='';return}
  if(!j.found){g.className='';msgEl.textContent='No veo la carta';return}
  if(j.top[0].score<CFG.minScore){hist=[];confirmed=null;lastScanAt=Date.now()+CFG.noCardGapMs-CFG.scanGapMs;setState('','No veo una carta ('+j.top[0].score.toFixed(2)+')');res.innerHTML=EMPTY;return}
+ // evidencia suficiente (nombre leído con buen parecido, parecido muy alto o lo impreso confirma): no hace falta repetir la lectura, como en la web
+ const evid=j.status==='confirmado'||(j.ocr&&j.ocr.name&&j.ocr.name.length>0&&j.top[0].score>=OCR_MIN)||j.top[0].score>=SURE_MIN;
+ if(evid){hist=[j];confirmed=(j.top[0].group||(j.top[0].category_id+':'+j.top[0].product_id));cur=j;const q=quality(j.top,j.ocr&&j.ocr.margin);render(j,1,q,1,true);const st=STATUS[j.status]||(q.ok?STATUS.probable:STATUS.dudosa);setState(st[0],st[1]);return}
  hist.push(j);if(hist.length>CFG.window)hist.shift();
  const cnt={};hist.forEach(h=>{const id=h.top[0].group||(h.top[0].category_id+':'+h.top[0].product_id);cnt[id]=(cnt[id]||0)+1});
  const [bestId,n]=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0];
  const last=[...hist].reverse().find(h=>(h.top[0].group||(h.top[0].category_id+':'+h.top[0].product_id))===bestId);
  const q=quality(last.top,last.ocr&&last.ocr.margin);
  cur=last;render(last,n,q,hist.length,n>=CFG.votes);
- if(n>=CFG.votes){confirmed=bestId;setState(q.ok?'ok':'mid',q.ok?'Probable ✓':'Dudoso: revisa las candidatas')}
+ if(n>=CFG.votes){confirmed=bestId;const st=STATUS[last.status]||(q.ok?STATUS.probable:STATUS.dudosa);setState(st[0],st[1])}
  else setState('scan','Confirmando… '+n+'/'+CFG.votes);}
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const altCard=x=>'<div class=alt data-c="'+esc(x.category_id)+'" data-p="'+esc(x.product_id)+'" data-n="'+esc(x.name)+'"><img src="'+esc(x.image)+'" referrerpolicy="no-referrer" alt=""><div>'+esc(x.name)+'</div><small>'+esc(x.lang)+(x.set?' · '+esc(x.set):'')+(x.number?' · '+esc(x.number):'')+' · '+(x.score!=null?x.score.toFixed(2):'')+'</small></div>';
 function render(j,n,q,len,done){
  const t=j.top,b=t[0],pct=Math.max(0,Math.min(100,Math.round((b.score-.4)/.6*100)));
+ const st=STATUS[j.status]||(q.ok?STATUS.probable:STATUS.dudosa),read=j.ocr&&j.ocr.impreso?Object.values(j.ocr.impreso).filter(Boolean).join(', '):'';
+ const same=(j.same||[]).filter(x=>!t.some(y=>y.product_id===x.product_id&&y.category_id===x.category_id)).slice(0,12);
  res.innerHTML='<div class=card><div class=top><div class=art><img src="'+esc(b.image)+'" referrerpolicy="no-referrer" alt=""></div><div class=info>'+
-  '<span class="verdict '+(done?(q.ok?'ok':'mid'):'mid')+'">'+(done?(q.ok?'Probable':'Dudoso'):'Confirmando '+n+'/'+CFG.votes)+'</span>'+
+  '<span class="verdict '+(done?st[0]:'mid')+'">'+(done?esc(st[1]):'Confirmando '+n+'/'+CFG.votes)+'</span>'+
   '<h2>'+esc(b.name)+(b.number?' <span class=num>· '+esc(b.number)+'</span>':'')+'</h2>'+
   '<div class=chips><span class=g>'+esc(b.lang)+'</span>'+(b.set?'<span>'+esc(b.set)+'</span>':'')+(b.rarity?'<span>'+esc(b.rarity)+'</span>':'')+'</div>'+
   '<div class=bar><i style="width:'+pct+'%"></i></div><div class=meta><span>similitud '+b.score.toFixed(2)+'</span><span>margen '+q.m.toFixed(2)+'</span></div></div></div>'+
-  '<div class=read><span>leído <b>'+((j.ocr&&j.ocr.name.length)?esc(j.ocr.name.join(', ')):'—')+'</b></span><span>lecturas <b>'+n+'/'+len+'</b></span><span>producto <b>'+esc(b.product_id)+'</b></span><span><b>'+j.ms+'</b> ms</span></div></div>'+
-  '<div class=acts><button id=yes>✓ Es esta</button><button id=no>✗ No es</button></div><div id=fixbox></div><h3>Otras candidatas</h3><div class=rail>'+t.slice(1).map(x=>'<div class=alt><img src="'+esc(x.image)+'" referrerpolicy="no-referrer" alt=""><div>'+esc(x.name)+'</div><small>'+esc(x.lang)+' · '+x.score.toFixed(2)+'</small></div>').join('')+'</div>';}
+  '<div class=read><span>nombre <b>'+((j.ocr&&j.ocr.name&&j.ocr.name.length)?esc(j.ocr.name.join(', ')):'—')+'</b></span><span>número <b>'+(read?esc(read):'—')+'</b></span><span>lecturas <b>'+n+'/'+len+'</b></span><span><b>'+j.ms+'</b> ms</span></div>'+
+  ((j.reasons&&j.reasons.length)?'<div class=read><span>'+esc(j.reasons.join(' · '))+'</span></div>':'')+'</div>'+
+  (j.status==='ambiguo'?'<div class=empty style="margin-top:12px"><b>Varias impresiones posibles</b>Toca la correcta abajo y el motor lo aprende.</div>':'')+
+  '<div class=acts><button id=yes>✓ Es esta</button><button id=no>✗ No es</button></div><div id=fixbox></div>'+
+  '<h3>Otras candidatas</h3><div class=rail>'+t.slice(1).map(altCard).join('')+'</div>'+
+  (same.length?'<h3>Otras impresiones de la misma carta</h3><div class=rail>'+same.map(altCard).join('')+'</div>':'');}
 
 /* ---- laboratorio: confirmar o corregir, y estadísticas ---- */
 function loadStats(){fetch('/lab/stats').then(r=>r.json()).then(t=>{document.getElementById('st').textContent=t.etiquetados?(t.acierto_pct+'% #1 · '+t.etiquetados+' etiquetadas · aprendió '+t.aprendidas):('0 etiquetadas · aprendió '+t.aprendidas)}).catch(()=>{})}
@@ -175,5 +187,6 @@ res.addEventListener('click',e=>{const t=e.target;
  else if(t.id==='no'){confirmed='fix';const box=document.getElementById('fixbox');box.innerHTML='<div class=fix><input id=q placeholder="Escribe el nombre de la carta…" autocomplete=off><div class=found id=found></div></div>';const q=document.getElementById('q');q.focus();let timer=0;
   q.oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{const r=await fetch('/lab/search?q='+encodeURIComponent(q.value)+'&games='+encodeURIComponent(gamesHeader())).then(x=>x.json()).catch(()=>({cards:[]}));window.__found=r.cards;
    document.getElementById('found').innerHTML=r.cards.map((c,i)=>'<div class=alt data-i='+i+'><img src="'+esc(c.image)+'" referrerpolicy="no-referrer" alt=""><div>'+esc(c.name)+'</div><small>'+esc(c.lang)+(c.set?' · '+esc(c.set):'')+(c.number?' · '+esc(c.number):'')+'</small></div>').join('')||'<div class=empty>Sin resultados</div>'},250)}}
- else{const el=t.closest&&t.closest('.found .alt');if(el)send(window.__found[+el.dataset.i])}});
+ else{const f=t.closest&&t.closest('.found .alt');if(f){send(window.__found[+f.dataset.i]);return}
+  const r=t.closest&&t.closest('.rail .alt[data-p]');if(r)send({category_id:+r.dataset.c,product_id:+r.dataset.p,name:r.dataset.n})}});
 </script></html>

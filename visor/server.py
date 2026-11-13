@@ -37,6 +37,7 @@ from app.recognition.embedding.base import CANON_H, CANON_W  # noqa: E402
 from app.recognition.embedding.dinov2_client import Dinov2WorkerExtractor  # noqa: E402
 from app.recognition.embedding.grid import GridExtractor  # noqa: E402
 from app.recognition.embedding.service import EmbeddingService  # noqa: E402
+import impreso  # noqa: E402  (lectura del número impreso por juego)
 
 CERT, KEY = (sys.argv[1], sys.argv[2]) if len(sys.argv) > 2 else (None, None)
 PORT = int(os.environ.get("VISOR_PORT") or (sys.argv[3] if len(sys.argv) > 3 else 8443))
@@ -107,6 +108,7 @@ NUM_IDX: dict = {}
 NAME_BUCKET: dict = {}
 NAME_OF: list = []
 PIDX: dict = {}  # (categoría, producto) -> posición en el índice
+NUMRAW: list = []  # número tal como lo guarda el catálogo, por posición del índice
 
 
 def build_meta() -> None:
@@ -115,13 +117,14 @@ def build_meta() -> None:
         info = {(c, p): (n, nu, (sn or "").startswith("Prize Pack")) for c, p, n, nu, sn in con.execute("select c.category_id, c.product_id, c.name, c.number, s.name from mirror_cards c left join mirror_sets s on s.category_id=c.category_id and s.group_id=c.group_id")}
     finally:
         con.close()
-    NAME_IDX.clear(); NUM_IDX.clear(); NAME_BUCKET.clear(); NAME_OF.clear()
+    NAME_IDX.clear(); NUM_IDX.clear(); NAME_BUCKET.clear(); NAME_OF.clear(); NUMRAW.clear()
     prize = []
     for i, (c, p) in enumerate(zip(REF_SPEC["cat"].tolist(), REF_SPEC["pid"].tolist())):
         n, nu, is_prize = info.get((c, p), ("", "", False))
         prize.append(is_prize)
         k = nname(n)
         NAME_OF.append(k)
+        NUMRAW.append(nu or "")
         if len(k) >= 3:
             NAME_IDX.setdefault(k, []).append(i)
         for nk in {nkey(nu), nkey((nu or "").split(" ")[0])}:  # «BT15-101 SEC»: también sin la rareza
@@ -235,6 +238,38 @@ def strip_text(piece: np.ndarray) -> str:
         return "\n".join(OCR.read(path, "multi", 11) if isinstance(OCR, OcrTesseract) else OCR.read(path, "en-US"))
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+def region_reads(piece: np.ndarray, cats: list) -> dict:
+    """Lee el número impreso en la zona que usa cada juego candidato (impreso.REGIONS). -> {juego: (número, sigla, texto leído)}"""
+    out = {}
+    h, w = piece.shape[:2]
+    for game in dict.fromkeys(impreso.GAME_OF_CAT.get(c) for c in cats):
+        regions = impreso.REGIONS.get(game)
+        if not regions:
+            continue
+        number, code, text = None, None, ""
+        for psm in (6, 11):  # bloque de texto y, si no sale número, texto suelto
+            texts = []
+            for x, y, rw, rh in regions:
+                crop = piece[int(y * h): int((y + rh) * h) + 1, int(x * w): int((x + rw) * w) + 1]
+                if crop.size == 0:
+                    continue
+                scale = max(1.0, 900 / max(crop.shape[1], 1))
+                big = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC) if scale > 1 else crop
+                big = cv2.copyMakeBorder(big, 12, 12, 12, 12, cv2.BORDER_REPLICATE)
+                path = str(DATA / f"ocr_{uuid.uuid4().hex}.png")
+                cv2.imwrite(path, big)
+                try:
+                    texts += OCR.read(path, "multi", psm) if isinstance(OCR, OcrTesseract) else OCR.read(path, "en-US")
+                finally:
+                    Path(path).unlink(missing_ok=True)
+            text = "\n".join(texts)
+            number, code = impreso.parse_ocr(game, text)
+            if number:
+                break
+        out[game] = (number, code, text[:120])
+    return out
 
 
 def detect_language(text: str, top_cat: int | None) -> dict:
@@ -643,7 +678,6 @@ async def scan(request: Request):
     gm0, cat0 = GMASK["m"], REF_SPEC["cat"]
     pokemon_in_play = gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS)))  # con Pokémon en juego el cuerpo también da el idioma
     readers.append(threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True))  # el número impreso sirve en todos los juegos
-    readers.append(threading.Thread(target=lambda: body_box.update(strip=strip_text(piece_ocr)), daemon=True))  # franja inferior ampliada: el número es letra chica
     for th in readers:
         th.start()
     best, n_emb = None, 0
@@ -668,10 +702,20 @@ async def scan(request: Request):
                 hi180 = cv2.rotate(hi, cv2.ROTATE_180)
                 names_box["r"] = ocr_hits(hi180)
                 body_box["text"] = body_text(hi180)
-                body_box["strip"] = strip_text(hi180)
                 piece_ocr = hi180
             name_idx, num_idx, lines, found = names_box["r"]
-            for nk in number_keys(body_box.get("text", "") + "\n" + body_box.get("strip", "")):  # número impreso (cuerpo y franja inferior), en cualquier juego
+            try:
+                reads = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, _ in best["top"][:3]])  # número impreso en la zona de cada juego candidato
+            except Exception as exc:  # noqa: BLE001
+                print("zonas fallo:", exc, flush=True)
+                reads = {}
+            ocr_info["impreso"] = {g: r[0] for g, r in reads.items()}
+            if BENCH:
+                ocr_info["impreso_texto"] = {g: r[2] for g, r in reads.items()}
+            for g, r in reads.items():
+                if r[0]:
+                    num_idx += NUM_IDX.get(nkey(r[0]), [])[:300]
+            for nk in number_keys(body_box.get("text", "")):  # número impreso del cuerpo, en cualquier juego
                 if nk in NUM_IDX:
                     num_idx += NUM_IDX[nk][:300]
             if not found:  # el nombre no estaba arriba (One Piece, Lorcana, Digimon…): se busca también en el cuerpo de la carta
@@ -679,8 +723,6 @@ async def scan(request: Request):
                 name_idx += body_idx[:600]; found = body_names[:6]
                 ocr_info["name_body"] = True
             ocr_info.update(name=found, lines=lines[:4])
-            if BENCH:
-                ocr_info["strip"] = body_box.get("strip", "")[:120]
             gm = GMASK["m"]
             vis_full = REF_SPEC["mat"] @ best["vec"]
             cat_arr = REF_SPEC["cat"]
@@ -721,6 +763,30 @@ async def scan(request: Request):
             ids = np.array(sorted(pool))
             sims = REF_SPEC["mat"][ids] @ best["vec"]
             nm, nu = set(name_idx), set(num_idx)
+            region_extra = np.zeros(len(ids))  # lo impreso leído en la zona del juego, ya corregido solo hacia números de los candidatos
+            if reads:
+                top_sim = float(sims.max())
+                by_game = {}
+                for j, i in enumerate(ids.tolist()):
+                    by_game.setdefault(impreso.GAME_OF_CAT.get(int(cat_arr[i])), []).append((j, i))
+                for game, members in by_game.items():
+                    read = (reads.get(game) or (None,))[0]
+                    if not read:
+                        continue
+                    canon = {i: impreso.canon_number(game, NUMRAW[i]) for _, i in members}
+                    corrected = False
+                    if read not in {canon[i] for j, i in members if sims[j] >= top_sim - 0.12}:
+                        fix = impreso.constrain_to_candidates(read, {canon[i] for j, i in members if sims[j] >= top_sim - 0.12})
+                        if fix:
+                            read, corrected = fix[0], True
+                    for j, i in members:
+                        verdict = impreso.compare_canon(read, canon[i])
+                        if verdict == "exact" and corrected:
+                            region_extra[j] = 0.06  # una lectura «corregida» no confirma, solo orienta
+                        elif verdict == "partial":
+                            region_extra[j] = 0.04
+                        elif verdict == "none" and canon[i]:
+                            region_extra[j] = -0.03
             ok_vis = sims >= 0.45  # un nombre leido solo suma si la carta tambien se parece visualmente
             seen_stamp = ocr_info.get("league")  # None: no se midió el sello (no es una búsqueda de Pokémon)
             if seen_stamp is None: league_boost = 0.0
@@ -736,7 +802,7 @@ async def scan(request: Request):
                     pass
             both = np.array([w["both"] if (i in nm and i in nu) else 0.0 for i in ids.tolist()])  # nombre y número a la vez: lo que distingue una edición de otra
             learned = np.array([learn_boost.get(i, 0.0) for i in ids.tolist()]) * w.get("learn", 0.0)
-            final = sims + learned + ok_vis * (np.array([w["name"] if i in nm else 0.0 for i in ids.tolist()]) + np.array([w["num"] if i in nu else 0.0 for i in ids.tolist()]) + both + league_boost)
+            final = sims + learned + ok_vis * (np.array([w["name"] if i in nm else 0.0 for i in ids.tolist()]) + np.array([w["num"] if i in nu else 0.0 for i in ids.tolist()]) + both + region_extra + league_boost)
             order = np.argsort(-final)[:5]
             best["top"] = [(int(ids[j]), float(final[j])) for j in order]
             ocr_info["boost"] = round(float(final[order[0]] - sims[order[0]]), 2)
@@ -744,6 +810,27 @@ async def scan(request: Request):
             top_name = NAME_OF[int(ids[order[0]])]
             alt = [final[j] for j in np.argsort(-final) if NAME_OF[int(ids[j])] != top_name]
             ocr_info["margin"] = round(float(final[order[0]] - (alt[0] if alt else final[order[0]] - 0.2)), 3)
+            # estado (como el visor del navegador): confirmado · probable · ambiguo · dudosa · sin_coincidencias
+            ranked = np.argsort(-final)
+            first, first_j = int(ids[order[0]]), int(order[0])
+            margin = float(final[first_j] - final[ranked[1]]) if len(ranked) > 1 else 9.0
+            printed_hit, name_hit = first in nu, first in nm
+            rival_same = printed_hit and any(int(ids[j]) in nu and sims[first_j] - sims[j] < 0.05 for j in ranked[1:])  # otra impresión con el mismo número: lo impreso no desambigua
+            rival_other = sum(1 for j in ranked[1:8] if final[first_j] - final[j] < 0.04 and NAME_OF[int(ids[j])] != NAME_OF[first]) >= 2
+            reasons = []
+            if float(sims.max()) < 0.7:
+                status = "sin_coincidencias"
+            elif sims[first_j] < 0.8 and rival_other and not printed_hit and not name_hit:
+                status = "dudosa"; reasons.append("varias cartas distintas igual de parecidas")
+            elif printed_hit and not rival_same and margin >= 0.02:
+                status = "confirmado"
+            elif margin >= 0.04 and not rival_same:
+                status = "probable"
+            else:
+                status = "ambiguo"; reasons.append("varias impresiones con el mismo número impreso" if rival_same else "candidatos demasiado parecidos")
+            if not any(r[0] for r in reads.values()):
+                reasons.append("sin lectura de número: solo evidencia visual")
+            ocr_info.update(status=status, reasons=reasons)
         except Exception as exc:  # noqa: BLE001
             print("ocr fallo:", exc, flush=True)
     tm["ocr+reordenar"] = time.perf_counter() - mark; mark = time.perf_counter()
@@ -774,7 +861,7 @@ async def scan(request: Request):
     prev = cv2.imencode(".jpg", cv2.resize(best["img"], (110, 154)))[1].tobytes()
     out = {"found": True, "source": best["label"], "e1": bool(e1.found), "e1_conf": round(float(e1.confidence), 3),
             "top": [{**meta(int(REF_SPEC["cat"][i]), int(REF_SPEC["pid"][i])), "score": round(s, 4), "group": NAME_OF[i] if i < len(NAME_OF) else ""} for i, s in best["top"]],
-            "same": same, "indexed": int(len(REF_SPEC["pid"])), "ocr": ocr_info,
+            "same": same, "indexed": int(len(REF_SPEC["pid"])), "ocr": ocr_info, "status": ocr_info.get("status"), "reasons": ocr_info.get("reasons", []),
             "preview": "data:image/jpeg;base64," + base64.b64encode(prev).decode(), "ms": round((time.perf_counter() - t0) * 1000)}
     if LAB:
         try:
