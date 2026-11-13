@@ -249,7 +249,7 @@ def region_reads(piece: np.ndarray, cats: list) -> dict:
         if not regions:
             continue
         number, code, text = None, None, ""
-        for psm in (6, 11):  # bloque de texto y, si no sale número, texto suelto
+        for psm in (7, 11):  # una línea y, si no sale número, texto suelto
             texts = []
             for x, y, rw, rh in regions:
                 crop = piece[int(y * h): int((y + rh) * h) + 1, int(x * w): int((x + rw) * w) + 1]

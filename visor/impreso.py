@@ -14,11 +14,11 @@ GAME_OF_CAT = {3: "pokemon", 100: "pokemon", 85: "pokemon", 1: "magic", 2: "yugi
 REGIONS = {
     "pokemon": [(0.02, 0.90, 0.46, 0.09), (0.52, 0.90, 0.46, 0.09)],
     "magic": [(0.03, 0.925, 0.55, 0.07)],
-    "yugioh": [(0.50, 0.722, 0.47, 0.055)],
-    "onepiece": [(0.45, 0.90, 0.52, 0.09)],
+    "yugioh": [(0.60, 0.712, 0.38, 0.045)],  # medido sobre imágenes del catálogo: el código va bajo la ilustración, a la derecha
+    "onepiece": [(0.68, 0.925, 0.30, 0.065)],  # abajo a la derecha, junto a la rareza
     "riftbound": [(0.03, 0.925, 0.60, 0.07)],
     "lorcana": [(0.02, 0.925, 0.60, 0.07)],
-    "digimon": [(0.55, 0.02, 0.43, 0.08), (0.50, 0.90, 0.48, 0.09)],
+    "digimon": [(0.72, 0.745, 0.26, 0.055)],  # en la barra del nombre, a la derecha
 }
 
 TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "|": "1", "S": "5", "B": "8", "Z": "2", "G": "6"}
