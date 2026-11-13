@@ -133,7 +133,7 @@ class Ocr:
         self.p = subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(Path(__file__).with_name("ocr_worker.ps1"))],
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", bufsize=1)
 
-    def read(self, path: str, lang: str) -> list[str]:
+    def read(self, path: str, lang: str, psm: int = 6) -> list[str]:
         with self.lock:
             try:
                 if self.p is None or self.p.poll() is not None:
@@ -151,9 +151,9 @@ class OcrTesseract:
 
     LANGS = {"en-US": "eng", "es-ES": "spa", "multi": "eng+spa"}
 
-    def read(self, path: str, lang: str) -> list[str]:
+    def read(self, path: str, lang: str, psm: int = 6) -> list[str]:
         try:
-            r = subprocess.run(["tesseract", path, "stdout", "-l", self.LANGS.get(lang, "eng"), "--psm", "6"], capture_output=True, text=True, timeout=10, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"})  # noqa: S603,S607
+            r = subprocess.run(["tesseract", path, "stdout", "-l", self.LANGS.get(lang, "eng"), "--psm", str(psm)], capture_output=True, text=True, timeout=10, check=False, env={**os.environ, "OMP_THREAD_LIMIT": "1"})  # noqa: S603,S607
             return [x.strip() for x in r.stdout.splitlines() if x.strip()]
         except Exception:  # noqa: BLE001
             return []
@@ -195,8 +195,8 @@ def league_stamp(piece: np.ndarray) -> float:
 
 def ocr_text(path: str) -> str:
     if isinstance(OCR, OcrTesseract):
-        return " ".join(OCR.read(path, "multi"))
-    return " ".join(OCR.read(path, "en-US") + OCR.read(path, "es-ES"))  # el OCR de Windows lee un idioma por pasada
+        return "\n".join(OCR.read(path, "multi"))
+    return "\n".join(OCR.read(path, "en-US") + OCR.read(path, "es-ES"))  # el OCR de Windows lee un idioma por pasada
 
 
 def body_text(piece: np.ndarray) -> str:
@@ -208,6 +208,19 @@ def body_text(piece: np.ndarray) -> str:
     cv2.imwrite(path, big)
     try:
         return ocr_text(path)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def strip_text(piece: np.ndarray) -> str:
+    """Franja inferior de la carta (número de coleccionista y código de edición) ampliada, en modo de texto suelto."""
+    h, w = piece.shape[:2]
+    band = piece[int(h * 0.86):]
+    big = band if w >= 1400 else cv2.resize(band, (1400, int(1400 * band.shape[0] / max(w, 1))), interpolation=cv2.INTER_CUBIC)
+    path = str(DATA / f"ocr_{uuid.uuid4().hex}.png")
+    cv2.imwrite(path, big)
+    try:
+        return "\n".join(OCR.read(path, "multi", 11) if isinstance(OCR, OcrTesseract) else OCR.read(path, "en-US"))
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -241,6 +254,27 @@ WEIGHTS = {"name": float(os.environ.get("VISOR_W_NAME", "0.20")), "num": float(o
 BENCH = os.environ.get("VISOR_BENCH") == "1"
 
 
+def match_names(ls: list) -> tuple:
+    """Líneas de texto leído → (índices de cartas cuyo nombre aparece, nombres encontrados)."""
+    name_idx, names_found = [], []
+    for ln in ls:
+        k = nname(ln)
+        if len(k) < 4:
+            continue
+        if k in NAME_IDX:
+            name_idx += NAME_IDX[k][:300]; names_found.append(k)
+        else:
+            # el OCR a veces antepone o deja basura junto al nombre («I Energia del Team Rocket»): se prueban ventanas de palabras, las más largas primero
+            toks = k.split()
+            hit = next((w for size in range(min(len(toks), 6), 0, -1) for i in range(len(toks) - size + 1) if len(w := " ".join(toks[i:i + size])) >= 6 and w in NAME_IDX), None)
+            if hit:
+                name_idx += NAME_IDX[hit][:300]; names_found.append(hit)
+            elif len(k) >= 6:
+                for m in difflib.get_close_matches(k, [x for x in NAME_BUCKET.get(k[0], []) if abs(len(x) - len(k)) <= 3], n=2, cutoff=0.86):
+                    name_idx += NAME_IDX[m][:300]; names_found.append(m + "~")
+    return name_idx, names_found
+
+
 def ocr_hits(piece: np.ndarray):
     """Lee el texto de la carta y busca nombres/numeros del indice. Devuelve (indices_nombre, indices_numero, lineas, nombres)."""
     h, w = piece.shape[:2]
@@ -253,21 +287,8 @@ def ocr_hits(piece: np.ndarray):
     for lang in (("multi",) if isinstance(OCR, OcrTesseract) else ("en-US", "es-ES")):  # Tesseract lee los dos idiomas en una pasada
         ls = OCR.read(path, lang)
         lines += ls
-        for ln in ls[:8]:
-            k = nname(ln)
-            if len(k) < 4:
-                continue
-            if k in NAME_IDX:
-                name_idx += NAME_IDX[k][:300]; names_found.append(k)
-            else:
-                # el OCR a veces antepone o deja basura junto al nombre («I Energia del Team Rocket»): se prueban ventanas de palabras, las más largas primero
-                toks = k.split()
-                hit = next((w for size in range(min(len(toks), 6), 0, -1) for i in range(len(toks) - size + 1) if len(w := " ".join(toks[i:i + size])) >= 6 and w in NAME_IDX), None)
-                if hit:
-                    name_idx += NAME_IDX[hit][:300]; names_found.append(hit)
-                elif len(k) >= 6:
-                    for m in difflib.get_close_matches(k, [x for x in NAME_BUCKET.get(k[0], []) if abs(len(x) - len(k)) <= 3], n=2, cutoff=0.86):
-                        name_idx += NAME_IDX[m][:300]; names_found.append(m + "~")
+        found_idx, found_names = match_names(ls[:8])
+        name_idx += found_idx; names_found += found_names
         for nk in number_keys(" ".join(ls)):
             if nk in NUM_IDX:
                 num_idx += NUM_IDX[nk][:300]
@@ -500,6 +521,7 @@ async def scan(request: Request):
     gm0, cat0 = GMASK["m"], REF_SPEC["cat"]
     pokemon_in_play = gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS)))  # con Pokémon en juego el cuerpo también da el idioma
     readers.append(threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True))  # el número impreso sirve en todos los juegos
+    readers.append(threading.Thread(target=lambda: body_box.update(strip=strip_text(piece_ocr)), daemon=True))  # franja inferior ampliada: el número es letra chica
     for th in readers:
         th.start()
     best, n_emb = None, 0
@@ -524,12 +546,19 @@ async def scan(request: Request):
                 hi180 = cv2.rotate(hi, cv2.ROTATE_180)
                 names_box["r"] = ocr_hits(hi180)
                 body_box["text"] = body_text(hi180)
+                body_box["strip"] = strip_text(hi180)
                 piece_ocr = hi180
             name_idx, num_idx, lines, found = names_box["r"]
-            for nk in number_keys(body_box.get("text", "")):  # número impreso del cuerpo, en cualquier juego
+            for nk in number_keys(body_box.get("text", "") + "\n" + body_box.get("strip", "")):  # número impreso (cuerpo y franja inferior), en cualquier juego
                 if nk in NUM_IDX:
                     num_idx += NUM_IDX[nk][:300]
+            if not found:  # el nombre no estaba arriba (One Piece, Lorcana, Digimon…): se busca también en el cuerpo de la carta
+                body_idx, body_names = match_names([x for x in body_box.get("text", "").split("\n")[:40]])
+                name_idx += body_idx[:600]; found = body_names[:6]
+                ocr_info["name_body"] = True
             ocr_info.update(name=found, lines=lines[:4])
+            if BENCH:
+                ocr_info["strip"] = body_box.get("strip", "")[:120]
             gm = GMASK["m"]
             vis_full = REF_SPEC["mat"] @ best["vec"]
             cat_arr = REF_SPEC["cat"]

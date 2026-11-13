@@ -36,7 +36,10 @@ nprng = np.random.default_rng(SEED)
 def sample():
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     out = []
+    only = [int(x) for x in os.environ.get("BENCH_CATS", "").split(",") if x]
     for cat in LANG:
+        if only and cat not in only:
+            continue
         rows = con.execute("select category_id, product_id, name, number, image_url from mirror_cards where category_id=? and image_origin='carpetazo_r2' and image_url like 'https://%'", (cat,)).fetchall()
         groups = defaultdict(list)
         for r in rows:
@@ -125,7 +128,7 @@ if __name__ == "__main__":
         if it["reprint"]:
             s["rn"] += 1; s["rexact1"] += exact1
         s["ms"] += dt
-        res.append({**it, "found": r.get("found"), "exact1": exact1, "exact5": exact5, "name1": name1, "got": {k: t1.get(k) for k in ("name", "number", "set", "product_id", "category_id", "score")}, "ocr": (r.get("ocr") or {}).get("name"), "ms": round(dt * 1000)})
+        res.append({**it, "found": r.get("found"), "exact1": exact1, "exact5": exact5, "name1": name1, "got": {k: t1.get(k) for k in ("name", "number", "set", "product_id", "category_id", "score")}, "ocr": r.get("ocr"), "ms": round(dt * 1000)})
         if n % 25 == 0:
             print(f"  {n}/{len(items)}", flush=True)
     Path(OUT).parent.mkdir(parents=True, exist_ok=True)
