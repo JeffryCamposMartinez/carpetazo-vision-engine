@@ -253,7 +253,7 @@ def region_reads(piece: np.ndarray, cats: list) -> dict:
         if not regions:
             continue
         number, code, text = None, None, ""
-        for psm in (7, 11):  # una línea y, si no sale ni un dígito, texto suelto
+        for psm in (6, 11):  # bloque de texto y, si no sale ni un dígito, texto suelto
             texts = []
             for x, y, rw, rh in regions:
                 crop = piece[int(y * h): int((y + rh) * h) + 1, int(x * w): int((x + rw) * w) + 1]
@@ -265,7 +265,7 @@ def region_reads(piece: np.ndarray, cats: list) -> dict:
                 path = str(DATA / f"ocr_{uuid.uuid4().hex}.png")
                 cv2.imwrite(path, big)
                 try:
-                    texts += OCR.read(path, "en-US", psm, NUM_CHARS)  # solo inglés y solo los caracteres de un número: más rápido y más exacto en letra chica
+                    texts += OCR.read(path, "en-US", psm)  # solo inglés: un modelo menos que cargar
                 finally:
                     Path(path).unlink(missing_ok=True)
             text = "\n".join(texts)
