@@ -250,21 +250,18 @@ def detect_language(text: str, top_cat: int | None) -> dict:
     elif top_cat == 85:
         info.update(code="ja", conf=0.6, source="visual")  # sin texto latino legible y la más parecida es la versión japonesa
     return info
-TOKEN_RE = re.compile(r"[A-Z0-9]+(?:[-/ ][A-Z0-9]+)?")
+NUMRE = re.compile(r"\b(\d{1,3}\s*/\s*[0-9A-Z]{2,5})\b|\b([A-Z0-9]{2,6}-[A-Z]{0,3}\d{2,4})\b|\b(\d{3,4})\s+[CURMSTLP]\b|\b[CURMSTLP]\s+(\d{3,4})\b")  # 182/182 · BT5-032 · «0162 R» y «R 0162» (Magic)
 
 
 def number_keys(text: str) -> list:
-    """Claves de número de coleccionista de todo lo que parece un número en el texto leído: «190/271» (y su parte «190»), «OP14-028», «0192»…"""
+    """Claves de los números de coleccionista que aparecen en el texto leído. Solo formas que parecen un número (el ruido del OCR no suma)."""
     keys = set()
-    for tok in TOKEN_RE.findall(text.upper()):
-        if not re.search(r"\d", tok):
-            continue
-        parts = {tok, tok.split("/")[0], *tok.split(" ")}  # «190/271» → «190» (Magic imprime el total aparte); «R 0241» → «0241»
-        for part in parts:
-            k = nkey(part)
-            if len(k) >= 3 and re.search(r"\d", k):
-                keys.add(k)
-    return list(keys)
+    for m in NUMRE.finditer(text.upper()):
+        g = next(x for x in m.groups() if x)
+        keys.add(nkey(g))
+        if "/" in g:  # Magic imprime «190/271» y el catálogo guarda «190»
+            keys.add(nkey(g.split("/")[0]))
+    return [k for k in keys if len(k) >= 3]
 
 
 # Pesos del puntaje final (se afinan con evaluation/scan_bench.py; con VISOR_BENCH=1 la cabecera x-weights los cambia solo en esa petición)
