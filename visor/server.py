@@ -250,7 +250,7 @@ def region_reads(piece: np.ndarray, cats: list) -> dict:
     h, w = piece.shape[:2]
     for game in dict.fromkeys(impreso.GAME_OF_CAT.get(c) for c in cats):
         regions = impreso.REGIONS.get(game)
-        if not regions:
+        if not regions or (game == "myl" and not MYL_READ):
             continue
         number, code, text = None, None, ""
         for psm in (6, 11):  # bloque de texto y, si no sale ni un dígito, texto suelto
@@ -309,6 +309,7 @@ def number_keys(text: str) -> list:
 # Pesos del puntaje final (se afinan con evaluation/scan_bench.py; con VISOR_BENCH=1 la cabecera x-weights los cambia solo en esa petición)
 WEIGHTS = {"name": float(os.environ.get("VISOR_W_NAME", "0.20")), "num": float(os.environ.get("VISOR_W_NUM", "0.25")), "both": float(os.environ.get("VISOR_W_BOTH", "0.15"))}
 BENCH = os.environ.get("VISOR_BENCH") == "1"
+MYL_READ = os.environ.get("VISOR_MYL") == "1"  # bandera: lectura propia de Mitos y Leyendas (número al pie y nombre vertical); apagada por defecto
 FAST_PATH = os.environ.get("VISOR_FAST", "1") == "1"  # carta clara y sin reimpresiones: no se lee nada (el OCR es el 77 % del tiempo)
 LAB = os.environ.get("VISOR_LAB") == "1"  # laboratorio de entrenamiento (solo la instancia de pruebas): página con el visor, guarda cada escaneo y aprende de las confirmaciones
 WEIGHTS["learn"] = float(os.environ.get("VISOR_W_LEARN", "0.30"))  # peso de las fotos reales ya confirmadas
@@ -722,7 +723,7 @@ async def scan(request: Request):
             def _names():
                 try:
                     names_box["r"] = ocr_hits(piece_ocr)
-                    if gm0 is None or bool(np.any(gm0 & (cat0 == 99))):  # Mitos y Leyendas en juego: su nombre va en vertical
+                    if MYL_READ and (gm0 is None or bool(np.any(gm0 & (cat0 == 99)))):  # Mitos y Leyendas en juego: su nombre va en vertical
                         idx, found = myl_name_hits(piece_ocr)
                         r = names_box["r"]
                         names_box["r"] = (r[0] + idx, r[1], r[2], r[3] + found)
