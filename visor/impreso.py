@@ -19,6 +19,7 @@ REGIONS = {
     "riftbound": [(0.03, 0.925, 0.60, 0.07)],
     "lorcana": [(0.02, 0.925, 0.60, 0.07)],
     "digimon": [(0.72, 0.745, 0.26, 0.055)],  # en la barra del nombre, a la derecha
+    "myl": [(0.55, 0.950, 0.43, 0.045)],  # pie de la carta, a la derecha: «1 - 236 / PRIMERA EDICIÓN» (medido sobre imágenes del catálogo)
 }
 
 TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "|": "1", "S": "5", "B": "8", "Z": "2", "G": "6"}
@@ -119,9 +120,16 @@ def _digimon_canon(raw):
 
 
 def _myl_canon(raw):
+    """Impreso en la carta: «1 - 236» (número y total). Catálogo: «ES-001-236» (sigla, número y total) o «ABC-123» (sin total)."""
     t = up(raw).replace(" ", "")
-    a, b = re.fullmatch(r"([A-Z]{2,8})-(\d{1,3})", t), re.fullmatch(r"(\d{1,3})/(\d{1,3})", t)
-    return f"{a.group(1)}-{trim_zeros(a.group(2))}" if a else f"{trim_zeros(b.group(1))}/{trim_zeros(b.group(2))}" if b else None
+    printed = re.fullmatch(r"(\d{1,3})[/-](\d{1,3})", t)
+    if printed:
+        return f"{trim_zeros(printed.group(1))}/{trim_zeros(printed.group(2))}"
+    full = re.fullmatch(r"[A-Z0-9]{2,8}-(\d{1,3})-(\d{1,3})[A-Z]?", t)
+    if full:
+        return f"{trim_zeros(full.group(1))}/{trim_zeros(full.group(2))}"
+    short = re.fullmatch(r"[A-Z0-9]{2,8}-(\d{1,3})[A-Z]?", t)
+    return trim_zeros(short.group(1)) if short else None
 
 
 CANON = {"pokemon": _pokemon_canon, "magic": _magic_canon, "yugioh": _yugioh_canon, "onepiece": _onepiece_canon, "riftbound": _riftbound_canon, "lorcana": _lorcana_canon, "digimon": _digimon_canon, "myl": _myl_canon}
@@ -173,8 +181,6 @@ def parse_ocr(game: str, text: str):
         num = canon_number(game, f"{fix_digits(m.group(1))}/{m.group(2) if m.group(2)[0] == 'P' else fix_digits(m.group(2))}") if m else None
         return num, (s.group(1) if s else None)
     if game == "myl":
-        a = re.search(r"\b([A-Z]{2,8})\s?-\s?([0-9OIS]{1,3})\b", t)
-        b = re.search(r"\b([0-9OIS]{1,3})\s*/\s*([0-9OIS]{1,3})\b", t)
-        num = canon_number(game, f"{a.group(1)}-{fix_digits(a.group(2))}") if a else canon_number(game, f"{fix_digits(b.group(1))}/{fix_digits(b.group(2))}") if b else None
-        return num, (a.group(1) if a else None)
+        m = re.search(r"\b([0-9OIS]{1,3})\s*[-\u2013\u2014/]\s*([0-9OIS]{1,3})\b", t)  # pie de la carta: "1 - 236 / PRIMERA EDICION"
+        return (canon_number(game, f"{fix_digits(m.group(1))}/{fix_digits(m.group(2))}") if m else None), None
     return None, None

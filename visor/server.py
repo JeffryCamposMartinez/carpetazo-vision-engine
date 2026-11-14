@@ -336,6 +336,30 @@ def match_names(ls: list) -> tuple:
     return name_idx, names_found
 
 
+def myl_name_hits(piece: np.ndarray):
+    """Mitos y Leyendas imprime el nombre en vertical, a la izquierda y de abajo hacia arriba: se recorta esa franja, se endereza y se lee en una línea."""
+    h, w = piece.shape[:2]
+    strip = piece[int(h * 0.14): int(h * 0.82), 0: int(w * 0.15)]
+    if strip.size == 0:
+        return [], []
+    strip = cv2.rotate(strip, cv2.ROTATE_90_CLOCKWISE)
+    scale = max(1.0, 160 / max(strip.shape[0], 1))
+    if scale > 1:
+        strip = cv2.resize(strip, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    strip = cv2.copyMakeBorder(strip, 14, 14, 14, 14, cv2.BORDER_REPLICATE)
+    path = str(DATA / f"ocr_{uuid.uuid4().hex}.png")
+    cv2.imwrite(path, strip)
+    try:
+        lines = []
+        for psm in (7, 6):  # una línea y, si no sale nada, bloque
+            lines = OCR.read(path, "multi" if isinstance(OCR, OcrTesseract) else "es-ES", psm)
+            if lines:
+                break
+    finally:
+        Path(path).unlink(missing_ok=True)
+    return match_names(lines[:4])
+
+
 def ocr_hits(piece: np.ndarray):
     """Lee el texto de la carta y busca nombres/numeros del indice. Devuelve (indices_nombre, indices_numero, lineas, nombres)."""
     h, w = piece.shape[:2]
@@ -698,6 +722,10 @@ async def scan(request: Request):
             def _names():
                 try:
                     names_box["r"] = ocr_hits(piece_ocr)
+                    if gm0 is None or bool(np.any(gm0 & (cat0 == 99))):  # Mitos y Leyendas en juego: su nombre va en vertical
+                        idx, found = myl_name_hits(piece_ocr)
+                        r = names_box["r"]
+                        names_box["r"] = (r[0] + idx, r[1], r[2], r[3] + found)
                 except Exception as exc:  # noqa: BLE001
                     print("ocr nombre fallo:", exc, flush=True)
 
