@@ -701,7 +701,10 @@ async def scan(request: Request):
 
             def _regions():
                 try:
-                    reads_box["r"] = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, _ in best["top"][:3]])  # número impreso en la zona de cada juego candidato
+                    if hi is None and not (piece is not None and piece.size):  # foto entera sin carta localizada: las zonas son relativas a la carta, no valen
+                        return
+                    zone_cats = [int(REF_SPEC["cat"][i]) for i, sc in best["top"][:3] if top_sim - sc <= 0.03]  # la carta más probable, y otro juego solo si casi empata
+                    reads_box["r"] = region_reads(piece_ocr, zone_cats)  # número impreso en la zona de cada juego candidato
                 except Exception as exc:  # noqa: BLE001
                     print("zonas fallo:", exc, flush=True)
 
@@ -719,7 +722,7 @@ async def scan(request: Request):
                 body_box["text"] = body_text(hi180)
                 piece_ocr = hi180
                 try:
-                    reads_box["r"] = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, _ in best["top"][:3]])
+                    reads_box["r"] = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, sc in best["top"][:3] if top_sim - sc <= 0.03])
                 except Exception as exc:  # noqa: BLE001
                     print("zonas fallo:", exc, flush=True)
                     reads_box["r"] = {}
