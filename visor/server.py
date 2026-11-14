@@ -309,6 +309,7 @@ def number_keys(text: str) -> list:
 # Pesos del puntaje final (se afinan con evaluation/scan_bench.py; con VISOR_BENCH=1 la cabecera x-weights los cambia solo en esa petición)
 WEIGHTS = {"name": float(os.environ.get("VISOR_W_NAME", "0.20")), "num": float(os.environ.get("VISOR_W_NUM", "0.25")), "both": float(os.environ.get("VISOR_W_BOTH", "0.15"))}
 BENCH = os.environ.get("VISOR_BENCH") == "1"
+FAST_PATH = os.environ.get("VISOR_FAST", "1") == "1"  # carta clara y sin reimpresiones: no se lee nada (el OCR es el 77 % del tiempo)
 LAB = os.environ.get("VISOR_LAB") == "1"  # laboratorio de entrenamiento (solo la instancia de pruebas): página con el visor, guarda cada escaneo y aprende de las confirmaciones
 WEIGHTS["learn"] = float(os.environ.get("VISOR_W_LEARN", "0.30"))  # peso de las fotos reales ya confirmadas
 LEARN_MIN = 0.80  # parecido mínimo con una foto confirmada para que cuente
@@ -667,24 +668,12 @@ async def scan(request: Request):
     tm["detectar"] = time.perf_counter() - mark; mark = time.perf_counter()
     if not cands:
         return {"found": False, "ms": round((time.perf_counter() - t0) * 1000)}
-    # el OCR (nombre y texto del cuerpo) no depende del embedding: arranca a la vez y se solapan
     hi = rectify_hires(arr, e1) if e1.found else None  # carta enderezada: mejor para el OCR que la foto entera o el marco a ojo
     piece_ocr = hi if hi is not None else (piece if (piece is not None and piece.size) else arr)
-    names_box, body_box, readers = {"r": ([], [], [], [])}, {}, []
-
-    def _names():
-        try:
-            names_box["r"] = ocr_hits(piece_ocr)
-        except Exception as exc:  # noqa: BLE001
-            print("ocr nombre fallo:", exc, flush=True)
-
-    readers.append(threading.Thread(target=_names, daemon=True))
+    names_box, body_box, reads_box, readers = {"r": ([], [], [], [])}, {}, {"r": {}}, []
     gm0, cat0 = GMASK["m"], REF_SPEC["cat"]
     pokemon_in_play = gm0 is None or bool(np.any(gm0 & np.isin(cat0, PK_CATS)))  # con Pokémon en juego el cuerpo también da el idioma
-    readers.append(threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True))  # el número impreso sirve en todos los juegos
-    for th in readers:
-        th.start()
-    best, n_emb = None, 0
+    best, n_emb, fast = None, 0, False
     with lock:
         for label, img in cands:
             res = svc.embed(norm_luz(img))
@@ -697,22 +686,47 @@ async def scan(request: Request):
             if best["top"][0][1] >= EARLY_STOP:
                 break
         tm["embedding+búsqueda"] = time.perf_counter() - mark; mark = time.perf_counter()
+        # ¿hace falta leer? Una carta que se parece mucho a una sola del catálogo, sin reimpresiones cercanas ni otra carta pegada, no gana nada con el OCR
+        top_i, top_sim = best["top"][0]
+        top_name = NAME_OF[top_i]
+        rivals = [sc for i, sc in best["top"][1:] if NAME_OF[i] == top_name and top_sim - sc < 0.10]
+        gap = top_sim - max([sc for i, sc in best["top"][1:] if NAME_OF[i] != top_name] or [0.0])
+        fast = FAST_PATH and int(REF_SPEC["cat"][top_i]) not in PK_CATS and top_sim >= 0.88 and not rivals and gap >= 0.06
+        if not fast:  # nombre, cuerpo y zonas del número se leen a la vez
+            def _names():
+                try:
+                    names_box["r"] = ocr_hits(piece_ocr)
+                except Exception as exc:  # noqa: BLE001
+                    print("ocr nombre fallo:", exc, flush=True)
+
+            def _regions():
+                try:
+                    reads_box["r"] = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, _ in best["top"][:3]])  # número impreso en la zona de cada juego candidato
+                except Exception as exc:  # noqa: BLE001
+                    print("zonas fallo:", exc, flush=True)
+
+            readers = [threading.Thread(target=_names, daemon=True), threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True), threading.Thread(target=_regions, daemon=True)]
+            for th in readers:
+                th.start()
         # texto de la carta (nombre / numero) para re-ordenar: la mayoria de los fallos son cartas con plantilla parecida
         ocr_info = {"name": [], "lines": [], "boost": 0, "language": {"code": None, "conf": 0.0, "source": "none"}}
         try:
             for th in readers:
                 th.join()
-            if best["label"] == "E1 girada" and hi is not None:  # la carta estaba al revés: se lee otra vez al derecho
+            if best["label"] == "E1 girada" and hi is not None and not fast:  # la carta estaba al revés: se lee otra vez al derecho
                 hi180 = cv2.rotate(hi, cv2.ROTATE_180)
                 names_box["r"] = ocr_hits(hi180)
                 body_box["text"] = body_text(hi180)
                 piece_ocr = hi180
+                try:
+                    reads_box["r"] = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, _ in best["top"][:3]])
+                except Exception as exc:  # noqa: BLE001
+                    print("zonas fallo:", exc, flush=True)
+                    reads_box["r"] = {}
             name_idx, num_idx, lines, found = names_box["r"]
-            try:
-                reads = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, _ in best["top"][:3]])  # número impreso en la zona de cada juego candidato
-            except Exception as exc:  # noqa: BLE001
-                print("zonas fallo:", exc, flush=True)
-                reads = {}
+            reads = reads_box["r"]
+            if fast:
+                ocr_info["rapido"] = True
             ocr_info["impreso"] = {g: r[0] for g, r in reads.items()}
             if BENCH:
                 ocr_info["impreso_texto"] = {g: r[2] for g, r in reads.items()}
