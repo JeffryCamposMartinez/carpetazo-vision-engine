@@ -692,6 +692,8 @@ async def scan(request: Request):
         rivals = [sc for i, sc in best["top"][1:] if NAME_OF[i] == top_name and top_sim - sc < 0.10]
         gap = top_sim - max([sc for i, sc in best["top"][1:] if NAME_OF[i] != top_name] or [0.0])
         fast = FAST_PATH and int(REF_SPEC["cat"][top_i]) not in PK_CATS and top_sim >= 0.88 and not rivals and gap >= 0.06
+        if best["label"] == "E1 girada" and hi is not None:  # la carta estaba al revés: se lee ya al derecho (antes se leía dos veces)
+            piece_ocr = cv2.rotate(hi, cv2.ROTATE_180)
         if not fast:  # nombre, cuerpo y zonas del número se leen a la vez
             def _names():
                 try:
@@ -716,16 +718,6 @@ async def scan(request: Request):
         try:
             for th in readers:
                 th.join()
-            if best["label"] == "E1 girada" and hi is not None and not fast:  # la carta estaba al revés: se lee otra vez al derecho
-                hi180 = cv2.rotate(hi, cv2.ROTATE_180)
-                names_box["r"] = ocr_hits(hi180)
-                body_box["text"] = body_text(hi180)
-                piece_ocr = hi180
-                try:
-                    reads_box["r"] = region_reads(piece_ocr, [int(REF_SPEC["cat"][i]) for i, sc in best["top"][:3] if top_sim - sc <= 0.03])
-                except Exception as exc:  # noqa: BLE001
-                    print("zonas fallo:", exc, flush=True)
-                    reads_box["r"] = {}
             name_idx, num_idx, lines, found = names_box["r"]
             reads = reads_box["r"]
             if fast:
