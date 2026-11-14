@@ -705,7 +705,9 @@ async def scan(request: Request):
                 except Exception as exc:  # noqa: BLE001
                     print("zonas fallo:", exc, flush=True)
 
-            readers = [threading.Thread(target=_names, daemon=True), threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True), threading.Thread(target=_regions, daemon=True)]
+            readers = [threading.Thread(target=_names, daemon=True), threading.Thread(target=_regions, daemon=True)]
+            if any(int(REF_SPEC["cat"][i]) in PK_CATS for i, _ in best["top"][:3]):  # Pokémon: el cuerpo da el idioma, se lee a la vez; en los demás solo si el nombre no sale arriba
+                readers.append(threading.Thread(target=lambda: body_box.update(text=body_text(piece_ocr)), daemon=True))
             for th in readers:
                 th.start()
         # texto de la carta (nombre / numero) para re-ordenar: la mayoria de los fallos son cartas con plantilla parecida
@@ -724,6 +726,8 @@ async def scan(request: Request):
                     print("zonas fallo:", exc, flush=True)
                     reads_box["r"] = {}
             name_idx, num_idx, lines, found = names_box["r"]
+            if not fast and not found and "text" not in body_box:  # el nombre no estaba arriba (One Piece, Lorcana, Digimon…): se lee el cuerpo
+                body_box["text"] = body_text(piece_ocr)
             reads = reads_box["r"]
             if fast:
                 ocr_info["rapido"] = True
